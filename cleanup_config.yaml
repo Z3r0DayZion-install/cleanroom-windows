@@ -1,0 +1,18 @@
+paths:
+  - C:\Users\KickA\Downloads
+  - C:\Users\KickA\AppData\Local\Temp
+dry_run: true
+age_days:
+  temp: 7
+  installers: 30
+size_threshold_mb: 200
+extensions_archive: ['.msi', '.exe', '.zip', '.7z', '.rar']
+archive_dir: C:\Users\KickA\Downloads\cleanup_archive
+log_file: cleanup_log.json
+plan_file: cleanup_plan.json
+confirm_threshold_bytes: 5368709120
+exclude_patterns: []
+whitelist: []
+telemetry:
+  enabled: false
+  usage_log: usage_log.json

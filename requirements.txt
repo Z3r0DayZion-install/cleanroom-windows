@@ -1,0 +1,4 @@
+pyyaml
+send2trash
+pytest
+pillow

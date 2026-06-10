@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest -q tests/
+
+      - name: Build exe
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build_exe.ps1 -OneFile
+
+      - name: Verify exe exists
+        run: |
+          if (-not (Test-Path dist\Cleanroom\Cleanroom.exe)) { exit 1 }
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cleanroom
+          path: dist/Cleanroom/**
+
+      - name: Build installer
+        run: |
+          winget install --id JRSoftware.InnoSetup --exact --silent --accept-package-agreements --accept-source-agreements
+          powershell -NoProfile -ExecutionPolicy Bypass -File build_installer.ps1
+        continue-on-error: true
+
+      - name: Upload installer artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cleanroom-Setup
+          path: dist/Cleanroom-Setup-*.exe
+          if-no-files-found: ignore

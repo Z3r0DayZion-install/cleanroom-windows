@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.spec.bak
+cleanup_log.json
+cleanup_plan.json
+*.log
+/icon.ico
+/icon.png
