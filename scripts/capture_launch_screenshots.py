@@ -14,24 +14,31 @@ OUT = ROOT / 'assets' / 'screenshots'
 sys.path.insert(0, str(ROOT))
 
 from PIL import ImageGrab  # noqa: E402
-import tkinter as tk  # noqa: E402
+
+
+def _demo_root():
+    """Sandbox under LocalAppData\\Cleanroom — never smart_clean_tool in visible paths."""
+    base = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'Cleanroom' / 'demo_capture'
+    if base.exists():
+        import shutil
+        shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True)
+    return base
 
 
 def _grab_window(app, path: Path):
     app.update_idletasks()
     app.update()
-    time.sleep(0.4)
+    time.sleep(0.5)
     x, y = app.winfo_rootx(), app.winfo_rooty()
     w, h = app.winfo_width(), app.winfo_height()
-    if w < 200 or h < 200:
-        w, h = 1240, 700
     img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(path)
     print(f'Wrote {path} ({img.size[0]}x{img.size[1]})')
 
 
-def _seed_demo_log(tmp: Path, archive: Path):
+def _seed_demo_log(scan: Path, archive: Path, log_path: Path):
     """Activity ledger with verified custody (all dest files exist)."""
     entries = []
     samples = [
@@ -40,7 +47,7 @@ def _seed_demo_log(tmp: Path, archive: Path):
         ('partial-download', 'video.crdownload', 256 * 1024 * 1024),
     ]
     for reason, name, size in samples:
-        src = tmp / 'scan' / name
+        src = scan / name
         src.parent.mkdir(parents=True, exist_ok=True)
         src.write_bytes(b'x' * min(size, 4096))
         dest = archive / name
@@ -53,9 +60,8 @@ def _seed_demo_log(tmp: Path, archive: Path):
             'size': size,
             'when': '2026-06-10T14:00:00',
         })
-    log = tmp / 'cleanup_log.json'
-    log.write_text(json.dumps(entries, indent=2), encoding='utf-8')
-    return log
+    log_path.write_text(json.dumps(entries, indent=2), encoding='utf-8')
+    return log_path
 
 
 def capture_gui_screenshots():
@@ -68,21 +74,17 @@ def capture_gui_screenshots():
         setattr(messagebox, fn, lambda *a, **k: True if fn == 'askyesno' else None)
     gui_module.StartupManagerGUI._show_proof_report = lambda *a, **k: None
 
-    tmp = ROOT / '.screenshot_sandbox'
-    if tmp.exists():
-        import shutil
-        shutil.rmtree(tmp, ignore_errors=True)
-    tmp.mkdir()
+    tmp = _demo_root()
     scan = tmp / 'scan'
     scan.mkdir()
     archive = tmp / 'archive'
     archive.mkdir()
-    # Scan candidates for Review tab
     old = scan / 'reviewed_candidate.zip'
     old.write_text('demo payload', encoding='utf-8')
     old_ts = time.time() - 45 * 86400
     os.utime(old, (old_ts, old_ts))
-    log_path = _seed_demo_log(tmp, archive)
+    log_path = tmp / 'cleanup_log.json'
+    _seed_demo_log(scan, archive, log_path)
 
     cfg = tmp / 'config.yaml'
     cfg.write_text(
@@ -101,13 +103,15 @@ def capture_gui_screenshots():
     foresight_module.HEALTH_PATH = tmp / 'health_history.json'
 
     app = gui_module.StartupManagerGUI(config_path=cfg, restore_log_path=log_path)
-    app.geometry('1240x760')
+    try:
+        app.state('zoomed')
+    except Exception:
+        app.geometry(f'{app.winfo_screenwidth()}x860')
     app.update()
 
-    # Review tab
+    # Review tab — must include toolbar: Scan / Preview Receipt / Archive & Clean / Restore
     app.tab_control.select(0)
     app.refresh_cleanup()
-    pump = lambda: app.cleanup_items or True
     deadline = time.time() + 20
     while time.time() < deadline:
         app.update()
@@ -116,14 +120,14 @@ def capture_gui_screenshots():
         time.sleep(0.05)
     app.refresh_optimizer()
     app.update()
-    time.sleep(0.3)
+    time.sleep(0.4)
     _grab_window(app, OUT / 'cleanroom-review.png')
 
     # Activity tab — verified custody
     app.tab_control.select(1)
     app.refresh_activity()
     app.update()
-    time.sleep(0.3)
+    time.sleep(0.4)
     _grab_window(app, OUT / 'cleanroom-activity-ledger.png')
 
     app.destroy()
@@ -146,7 +150,7 @@ def capture_proof_pack_html():
         '--headless=new',
         '--disable-gpu',
         '--hide-scrollbars',
-        f'--window-size=1280,920',
+        '--window-size=1280,920',
         f'--screenshot={out}',
         url,
     ]
