@@ -7,5 +7,7 @@ dist/
 cleanup_log.json
 cleanup_plan.json
 *.log
+/screenshot_sandbox/
+.screenshot_sandbox/
 /icon.ico
 /icon.png

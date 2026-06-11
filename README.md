@@ -12,7 +12,13 @@ Cleanroom is not a fake "1,247 issues fixed" optimizer. It is a proof-first clea
 
 **Clean safely. Prove everything. Undo anytime.**
 
-Repository: [`cleanroom-windows`](https://github.com/YOUR_USER/cleanroom-windows)
+Repository: [`cleanroom-windows`](https://github.com/Z3r0DayZion-install/cleanroom-windows)
+
+![Cleanroom Review](assets/screenshots/cleanroom-review.png)
+
+![Cleanroom Activity Ledger](assets/screenshots/cleanroom-activity-ledger.png)
+
+![Cleanroom Proof Pack Demo](assets/screenshots/cleanroom-proof-pack-demo.png)
 
 ---
 
@@ -43,6 +49,8 @@ Repository: [`cleanroom-windows`](https://github.com/YOUR_USER/cleanroom-windows
 For README and launch screenshots, open the bundled demo Proof Pack (100% custody verified — not a gaps-detected example):
 
 [`docs/demo/cleanroom-proof-pack-demo.html`](docs/demo/cleanroom-proof-pack-demo.html)
+
+Launch screenshots live in [`assets/screenshots/`](assets/screenshots/).
 
 ---
 
