@@ -68,7 +68,7 @@ def _find_text_in_tree(widget, needle: str) -> bool:
     return False
 
 
-def check_layout(app, width: int, height: int, label: str) -> list[str]:
+def check_layout(app, width: int, height: int, label: str, *, check_settings: bool = False) -> list[str]:
     """Return list of layout failures at the given window size."""
     sw, sh = app.winfo_screenwidth(), app.winfo_screenheight()
     x = max(0, (sw - width) // 2)
@@ -90,10 +90,21 @@ def check_layout(app, width: int, height: int, label: str) -> list[str]:
     if not _find_text_in_tree(app, 'Archive-first mode is ON'):
         issues.append(f'{label}/archive-first banner missing')
 
+    if check_settings:
+        try:
+            app.tab_control.select(6)
+            app.update_idletasks()
+            app.update()
+            time.sleep(0.1)
+            if not _find_text_in_tree(app, 'local-only'):
+                issues.append(f'{label}/Settings local-only text missing')
+        except Exception as exc:
+            issues.append(f'{label}/Settings tab check error: {exc}')
+
     return issues
 
 
-def run_scaling_gates() -> int:
+def run_scaling_gates(tk_scaling: float = 1.0) -> int:
     from tkinter import messagebox
     import startup_manager_gui as gui_module
 
@@ -101,24 +112,36 @@ def run_scaling_gates() -> int:
         setattr(messagebox, fn, lambda *a, **k: True if fn == 'askyesno' else None)
 
     app = gui_module.StartupManagerGUI()
+    if tk_scaling != 1.0:
+        app.tk.call('tk', 'scaling', tk_scaling)
     all_issues: list[str] = []
     try:
         for w, h, label in GEOMETRIES:
-            issues = check_layout(app, w, h, label)
+            issues = check_layout(app, w, h, label, check_settings=False)
             if issues:
                 all_issues.extend(issues)
                 for i in issues:
                     _fail(i)
             else:
                 _ok(f'Layout gate passed at {label}')
+
+        if tk_scaling != 1.0:
+            label = f'150pct-tk-scaling-{tk_scaling}'
+            issues = check_layout(app, 1240, 760, label, check_settings=True)
+            if issues:
+                all_issues.extend(issues)
+                for i in issues:
+                    _fail(i)
+            else:
+                _ok(f'150% tk scaling layout gate passed at 1240x760 (scaling={tk_scaling})')
     finally:
         app.destroy()
 
     if all_issues:
         print(f'\nScaling gate FAILED ({len(all_issues)} issue(s))', file=sys.stderr)
         return 1
-    print('\nScaling gate PASSED (1240x760, 1366x768, 1920x1080)')
-    print('NOTE: 150% Windows display scaling must be verified manually.')
+    scale_note = f', tk scaling={tk_scaling}' if tk_scaling != 1.0 else ''
+    print(f'\nScaling gate PASSED (1240x760, 1366x768, 1920x1080{scale_note})')
     return 0
 
 
@@ -170,21 +193,94 @@ def run_packaged_smoke(exe: Path, seconds: float = 8.0) -> int:
     return 0
 
 
+def run_headless_proof(exe: Path, profile_local: Path) -> int:
+    """Run --headless-clean from installed EXE (no Python on PATH)."""
+    sandbox = profile_local / 'sandbox_run'
+    scan = sandbox / 'scan'
+    archive = sandbox / 'archive'
+    log_path = sandbox / 'cleanup_log.json'
+    scan.mkdir(parents=True, exist_ok=True)
+    old = scan / 'gate_test.zip'
+    old.write_text('sandbox payload', encoding='utf-8')
+    import time as _time
+    old_ts = _time.time() - 45 * 86400
+    os.utime(old, (old_ts, old_ts))
+
+    cfg = sandbox / 'config.yaml'
+    cfg.write_text(
+        f'paths:\n  - {scan}\n'
+        'age_days:\n  temp: 7\n  installers: 30\n'
+        'size_threshold_mb: 200\n'
+        "extensions_archive: ['.zip']\n"
+        'exclude_patterns: []\nwhitelist: []\n'
+        f'archive_dir: {archive}\n'
+        f'log_file: {log_path}\n'
+        'confirm_threshold_bytes: 99999999999999\n',
+        encoding='utf-8',
+    )
+
+    env = os.environ.copy()
+    env['LOCALAPPDATA'] = str(profile_local)
+    env['PATH'] = os.environ.get('SystemRoot', r'C:\Windows') + r'\System32'
+
+    proc = subprocess.run(
+        [str(exe), '--headless-clean', '--config', str(cfg)],
+        cwd=str(exe.parent),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        _fail(f'headless-clean exit {proc.returncode}: {proc.stderr[-500:] if proc.stderr else proc.stdout[-500:]}')
+        return 1
+    _ok('Installed EXE --headless-clean completed')
+
+    if not log_path.is_file():
+        _fail('cleanup_log.json not created after headless clean')
+        return 1
+    _ok('Archive log written (Archive & Clean path)')
+
+    receipts = profile_local / 'Cleanroom' / 'receipts'
+    if receipts.is_dir() and any(receipts.glob('*.txt')):
+        _ok('Cleanroom Receipt generated')
+    else:
+        _fail('No receipt in Cleanroom/receipts after headless clean')
+        return 1
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--packaged', metavar='EXE', default='',
                         help='Also run packaged EXE smoke test')
-    parser.add_argument('--scaling-only', action='store_true')
+    parser.add_argument('--installed-exe', metavar='EXE', default='',
+                        help='Run headless proof loop on installed EXE')
+    parser.add_argument('--profile-local', metavar='PATH', default='',
+                        help='LOCALAPPDATA for installed headless proof')
+    parser.add_argument('--tk-scaling', type=float, default=1.0,
+                        help='Simulate display scaling via tk scaling (1.5 = 150%%)')
+    parser.add_argument('--headless-only', action='store_true',
+                        help='Only run --installed-exe headless proof (skip layout gates)')
+    parser.add_argument('--include-150', action='store_true',
+                        help='Run additional layout pass at tk scaling 1.5')
     args = parser.parse_args()
 
     rc = 0
-    if not args.scaling_only:
-        pass
-    rc = run_scaling_gates()
-    if args.packaged:
-        rc = max(rc, run_packaged_smoke(Path(args.packaged)))
-    elif Path('dist/Cleanroom/Cleanroom.exe').is_file():
-        rc = max(rc, run_packaged_smoke(Path('dist/Cleanroom/Cleanroom.exe')))
+    if not args.headless_only:
+        rc = run_scaling_gates(args.tk_scaling if args.tk_scaling != 1.0 else 1.0)
+        if args.include_150 and args.tk_scaling == 1.0:
+            rc = max(rc, run_scaling_gates(1.5))
+    if args.installed_exe:
+        local = Path(args.profile_local) if args.profile_local else Path(tempfile.mkdtemp()) / 'LocalAppData'
+        local.mkdir(parents=True, exist_ok=True)
+        rc = max(rc, run_headless_proof(Path(args.installed_exe), local))
+    elif not args.headless_only:
+        if args.packaged:
+            rc = max(rc, run_packaged_smoke(Path(args.packaged)))
+        elif Path('dist/Cleanroom/Cleanroom.exe').is_file():
+            rc = max(rc, run_packaged_smoke(Path('dist/Cleanroom/Cleanroom.exe')))
     return rc
 
 
