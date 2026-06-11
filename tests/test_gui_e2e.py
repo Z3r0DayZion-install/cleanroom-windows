@@ -203,7 +203,7 @@ def test_apply_writes_receipt_with_proof_and_custody_verifies(sandbox):
     app.refresh_activity()
     assert len(app.activity_tree.get_children()) == 2
     assert app.stat_act_present.cget('text') == '2'
-    assert '100' in app.hdr_trust_lbl.cget('text')
+    assert '100' in app.hdr_trust_value.cget('text')
 
     # Verify Custody tool over the whole history reports everything present
     app.verify_custody()
