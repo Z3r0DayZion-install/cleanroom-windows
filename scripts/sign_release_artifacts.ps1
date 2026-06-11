@@ -8,7 +8,7 @@ $root = Split-Path -Parent $scriptDir
 $pfxB64 = $env:SIGNING_CERT_BASE64
 $pfxPass = $env:SIGNING_CERT_PASSWORD
 if (-not $pfxB64) {
-    Write-Host "SIGNING_CERT_BASE64 not set — building unsigned release artifacts."
+    Write-Host 'SIGNING_CERT_BASE64 not set - building unsigned release artifacts.'
     exit 0
 }
 

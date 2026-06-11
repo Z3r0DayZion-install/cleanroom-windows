@@ -27,6 +27,9 @@ import startup_manager_gui as gui_module
 
 def _display_available():
     try:
+        tcl_dir = os.environ.get('TCL_LIBRARY', '')
+        if tcl_dir and not (Path(tcl_dir) / 'init.tcl').is_file():
+            return False
         root = tk.Tk()
         root.destroy()
         return True

@@ -18,6 +18,12 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Configure Tcl/Tk for GUI tests
+        shell: pwsh
+        run: |
+          "TCL_LIBRARY=$env:pythonLocation\tcl\tcl8.6" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TK_LIBRARY=$env:pythonLocation\tcl\tk8.6" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
@@ -46,6 +52,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
 
       - name: Migration receipt tests
         run: python -m pytest tests/test_brand.py -p no:xonsh -q
