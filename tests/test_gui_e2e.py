@@ -61,6 +61,7 @@ def pump(app, cond, timeout=15.0):
 
 @pytest.fixture
 def sandbox(tmp_path, monkeypatch):
+    monkeypatch.setenv('CLEANROOM_DISABLE_ANIMATIONS', '1')
     scan_dir = tmp_path / 'scan'
     scan_dir.mkdir()
     archive_dir = tmp_path / 'archive'

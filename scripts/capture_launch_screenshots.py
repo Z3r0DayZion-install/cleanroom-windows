@@ -71,6 +71,7 @@ def _seed_demo_log(scan: Path, archive: Path, log_path: Path):
 
 
 def capture_gui_screenshots():
+    os.environ['CLEANROOM_DISABLE_ANIMATIONS'] = '1'
     import receipts as receipts_module
     import foresight as foresight_module
     import startup_manager_gui as gui_module

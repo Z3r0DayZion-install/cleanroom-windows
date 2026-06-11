@@ -4,6 +4,13 @@ import queue
 import brand
 import customtkinter as ctk
 from ui import ctk_theme
+from ui.receipt_animation import (
+    ReceiptPrinterPanel,
+    DEFAULT_LINES,
+    PREVIEW_LINES,
+    PROOF_PACK_LINES,
+    play_receipt_animation,
+)
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
@@ -753,20 +760,34 @@ class StartupManagerGUI(ctk.CTk):
         rec_card.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         ttk.Label(rec_card, text='What Cleanroom found', font=('Segoe UI', 11, 'bold'),
                   background=CARD_BG).pack(anchor='w', padx=10, pady=(8, 4))
-        rec_frame = ttk.Frame(rec_card, style='Card.TFrame')
-        rec_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
-        self.rec_tree = ttk.Treeview(rec_frame, columns=('severity', 'title', 'detail'),
+        rec_body = ttk.Frame(rec_card, style='Card.TFrame')
+        rec_body.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        rec_left = ttk.Frame(rec_body, style='Card.TFrame')
+        rec_left.pack(side='left', fill='both', expand=True)
+        self.rec_tree = ttk.Treeview(rec_left, columns=('severity', 'title', 'detail'),
                                      show='headings', selectmode='browse')
         self.rec_tree.heading('severity', text='Priority')
         self.rec_tree.heading('title', text='Recommendation')
         self.rec_tree.heading('detail', text='Why it matters')
         self.rec_tree.column('severity', width=90, anchor='center', stretch=False)
-        self.rec_tree.column('title', width=260, anchor='w')
-        self.rec_tree.column('detail', width=480, anchor='w')
-        rec_scroll = ttk.Scrollbar(rec_frame, orient='vertical', command=self.rec_tree.yview)
+        self.rec_tree.column('title', width=220, anchor='w')
+        self.rec_tree.column('detail', width=360, anchor='w')
+        rec_scroll = ttk.Scrollbar(rec_left, orient='vertical', command=self.rec_tree.yview)
         self.rec_tree.configure(yscrollcommand=rec_scroll.set)
         self.rec_tree.pack(side='left', fill='both', expand=True)
         rec_scroll.pack(side='right', fill='y')
+        self.receipt_printer = ReceiptPrinterPanel(
+            rec_body,
+            width=240,
+            height=200,
+            panel_bg=CARD_BG,
+            paper_bg='#E8EDF4',
+            accent=ACCENT,
+            text_color='#1F2937',
+            muted='#5B6573',
+            border=BORDER,
+        )
+        self.receipt_printer.pack(side='right', fill='y', padx=(10, 0))
         for sev, color in SEVERITY_COLORS.items():
             self.rec_tree.tag_configure(sev, foreground=color)
         self.rec_empty_hint = self._make_empty_hint(
@@ -901,6 +922,16 @@ class StartupManagerGUI(ctk.CTk):
         else:
             self.hdr_receipt_lbl.configure(text='🧾 Last Receipt: Not generated')
 
+    def _play_receipt_animation(self, stamp, on_complete=None, lines=None, duration_ms=900):
+        """Short proof-output animation on the Review tab; non-blocking."""
+        play_receipt_animation(
+            getattr(self, 'receipt_printer', None),
+            stamp,
+            lines=lines or DEFAULT_LINES,
+            on_complete=on_complete,
+            duration_ms=duration_ms,
+        )
+
     def _show_text_dialog(self, title, text, width=620, height=480):
         dlg = tk.Toplevel(self)
         dlg.title(title)
@@ -947,7 +978,15 @@ class StartupManagerGUI(ctk.CTk):
         } for it in items]
         body = receipts_module.format_receipt(draft)
         preview = ('*** PREVIEW ONLY — nothing has been archived yet ***\n\n' + body)
-        self._show_text_dialog('Cleanroom Receipt — Preview', preview)
+
+        def _open_preview():
+            self._show_text_dialog('Cleanroom Receipt — Preview', preview)
+
+        self._play_receipt_animation(
+            'RECEIPT GENERATED',
+            lines=PREVIEW_LINES,
+            on_complete=_open_preview,
+        )
 
     def _show_custody_trust_why(self):
         """Drilldown for custody trust — evidence, not a fake score."""
@@ -2503,8 +2542,23 @@ class StartupManagerGUI(ctk.CTk):
                 except Exception:
                     pass
             if prf and log:
-                self._show_proof_report(log, prf, receipt_path=receipt_path,
-                                        days_bought=bought, dup_count=dup_count)
+                def _open_proof_report():
+                    self._show_proof_report(
+                        log, prf, receipt_path=receipt_path,
+                        days_bought=bought, dup_count=dup_count)
+
+                if receipt_path and Path(receipt_path).is_file():
+                    self._play_receipt_animation(
+                        'RECEIPT GENERATED',
+                        on_complete=_open_proof_report,
+                    )
+                else:
+                    c = prf.get('custody') or {}
+                    ok = c.get('missing', 0) == 0 and c.get('total', 0) > 0
+                    self._play_receipt_animation(
+                        'CUSTODY VERIFIED' if ok else 'RECEIPT GENERATED',
+                        on_complete=_open_proof_report,
+                    )
             else:
                 messagebox.showinfo('Cleanup', f'Finished cleanup: {len(log)} items archived.{extra}')
             self.refresh_cleanup()
@@ -2585,9 +2639,20 @@ class StartupManagerGUI(ctk.CTk):
         try:
             audit_module.export_html_audit(
                 self._activity_feed, custody, summary, trust, path, app_version=APP_VERSION)
-            os.startfile(str(path))
-            messagebox.showinfo('Export Audit',
-                                f'Proof audit saved and opened in your browser:\n{path}')
+            if not path.is_file():
+                raise OSError(f'Proof Pack not written: {path}')
+
+            def _open_proof_pack():
+                os.startfile(str(path))
+                messagebox.showinfo(
+                    'Export Audit',
+                    f'Proof audit saved and opened in your browser:\n{path}')
+
+            self._play_receipt_animation(
+                'CUSTODY VERIFIED',
+                lines=PROOF_PACK_LINES,
+                on_complete=_open_proof_pack,
+            )
         except Exception as e:
             messagebox.showerror('Export Audit', f'Failed to write audit:\n{e}')
 
