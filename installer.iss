@@ -3,7 +3,7 @@
 ; Requires dist\Cleanroom\Cleanroom.exe (run build_exe.ps1 first)
 
 #define AppName "Cleanroom"
-#define AppVersion "1.0.1"
+#define AppVersion "1.0.2"
 #define AppPublisher "Cleanroom"
 #define AppExeName "Cleanroom.exe"
 
@@ -34,7 +34,6 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "dist\Cleanroom\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\Cleanroom\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "cleanup_config.yaml"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "register_task.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "run_scheduled.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
