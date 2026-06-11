@@ -19,7 +19,7 @@ This is not a fake "1,247 issues fixed" optimizer. Cleanroom produces receipts, 
 - Cleanroom Activity Ledger
 - Cleanroom Rewind restore path
 - Proof Pack HTML export
-- SmartClean → Cleanroom migration receipt
+- Legacy data migration receipt (one-time upgrade path)
 - 132 tests passing
 
 ## Downloads

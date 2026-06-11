@@ -1,0 +1,112 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  attestations: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest tests/ -p no:xonsh -q
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(python -c "import brand; print(brand.APP_VERSION)")
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building Cleanroom v$VERSION"
+
+      - name: Build portable exe
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build_exe.ps1
+
+      - name: Install Inno Setup
+        run: |
+          winget install --id JRSoftware.InnoSetup --exact --silent --accept-package-agreements --accept-source-agreements
+
+      - name: Build installer
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File build_installer.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: Optional code signing
+        shell: pwsh
+        env:
+          SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign_release_artifacts.ps1
+
+      - name: Generate demo Proof Pack
+        run: python scripts/generate_demo_proof_pack.py
+
+      - name: Capture launch screenshots
+        continue-on-error: true
+        run: python scripts/capture_launch_screenshots.py
+
+      - name: Validate launch screenshots
+        run: python scripts/verify_release_surface.py
+
+      - name: Generate SHA256SUMS
+        run: python scripts/generate_sha256sums.py --version "${{ steps.ver.outputs.version }}"
+
+      - name: Verify checksums match artifacts
+        run: python scripts/verify_release_surface.py --verify-checksums --version "${{ steps.ver.outputs.version }}"
+
+      - name: Attest installer provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/Cleanroom-Setup-${{ steps.ver.outputs.version }}.exe
+
+      - name: Attest portable exe provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/Cleanroom/Cleanroom.exe
+
+      - name: Attest SHA256SUMS provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: SHA256SUMS.txt
+
+      - name: Attest screenshot provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            assets/screenshots/cleanroom-review.png
+            assets/screenshots/cleanroom-activity-ledger.png
+            assets/screenshots/cleanroom-proof-pack-demo.png
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleanroom-windows-${{ steps.ver.outputs.version }}
+          path: |
+            dist/Cleanroom/**
+            dist/Cleanroom-Setup-*.exe
+            SHA256SUMS.txt
+            assets/screenshots/cleanroom-review.png
+            assets/screenshots/cleanroom-activity-ledger.png
+            assets/screenshots/cleanroom-proof-pack-demo.png
+            docs/demo/cleanroom-proof-pack-demo.html
+          if-no-files-found: error

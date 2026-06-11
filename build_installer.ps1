@@ -1,5 +1,6 @@
 param(
-    [string]$IssFile = "installer.iss"
+    [string]$IssFile = "installer.iss",
+    [string]$Version = ""
 )
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -28,8 +29,15 @@ if (-not $iscc) {
     exit 1
 }
 
+$issPath = Join-Path $scriptDir $IssFile
+$isccArgs = @($issPath)
+if ($Version) {
+    $isccArgs = @("/DAppVersion=$Version", $issPath)
+    Write-Host "Installer version override: $Version"
+}
+
 Write-Host "Compiling installer with: $iscc"
-& $iscc (Join-Path $scriptDir $IssFile)
+& $iscc @isccArgs
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Installer built in dist\ (Cleanroom-Setup-*.exe)"
 } else {
