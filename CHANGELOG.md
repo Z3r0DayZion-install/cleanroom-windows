@@ -1,6 +1,16 @@
 # Changelog
 
-## 2026-06-10 — Rebrand to Cleanroom (Latest)
+## Post v1.0.2 follow-up (not blockers)
+
+- Proof Pack trust display: do not show `100/100` when any archived artifact is missing (floor e.g. `99/100` when 1181/1182 verified).
+
+## 2026-06-11 — v1.0.2 CustomTkinter UI polish
+
+- CustomTkinter local-only UI shell, receipt printing animation, Proof Output panel.
+- Per-user install config on first run; PyInstaller bundles CustomTkinter assets.
+- Manual Sandbox proof-loop gate passed; CI release via tag `v1.0.2`.
+
+## 2026-06-10 — Rebrand to Cleanroom
 - Product renamed **Smart Clean → Cleanroom** with doctrine: *archive first, prove every action, roll back*.
 - New `brand.py`: central identity, `%LOCALAPPDATA%\Cleanroom` data dir; one-time SmartClean→Cleanroom migration with **Cleanroom Migration Receipt** (legacy dir left as backup).
 - Feature naming: Cleanroom Receipt, Cleanroom Rewind (was Time Machine), Custody Trust Score, Proof Pack (HTML).
