@@ -90,3 +90,50 @@ def latest_receipt(receipt_dir=None):
     rdir = Path(receipt_dir or RECEIPT_DIR)
     receipts = sorted(rdir.glob('receipt_*.txt')) if rdir.exists() else []
     return receipts[-1] if receipts else None
+
+
+def read_receipt(path):
+    """Load receipt text from disk."""
+    return Path(path).read_text(encoding='utf-8')
+
+
+def format_prune_receipt(pruned_entries, bytes_pruned=None, now=None):
+    """Human-readable proof for archive-only permanent removal."""
+    now = now or datetime.now()
+    if bytes_pruned is None:
+        bytes_pruned = sum(int(e.get('size') or 0) for e in pruned_entries)
+    lines = [
+        '=' * 46,
+        '      CLEANROOM — PRUNE RECEIPT',
+        f'  {brand.APP_MOTTO}',
+        '=' * 46,
+        f'  Date:         {now.strftime("%Y-%m-%d %H:%M:%S")}',
+        f'  Items pruned: {len(pruned_entries)}',
+        f'  Bytes pruned: {_human(bytes_pruned)}',
+        '-' * 46,
+        '  Archive-only removal. Original live files were not touched.',
+        '  Restoring these archived copies is no longer possible.',
+        '-' * 46,
+        '  Pruned from archive custody:',
+    ]
+    for e in pruned_entries[:100]:
+        dest = e.get('dest') or ''
+        lines.append(f'    {_human(int(e.get("size") or 0)):>8}  {dest}')
+    if len(pruned_entries) > 100:
+        lines.append(f'    … and {len(pruned_entries) - 100} more')
+    lines.extend(['=' * 46, ''])
+    return '\n'.join(lines)
+
+
+def write_prune_receipt(pruned_entries, bytes_pruned=None, receipt_dir=None, now=None):
+    if not pruned_entries:
+        return None
+    now = now or datetime.now()
+    rdir = Path(receipt_dir or RECEIPT_DIR)
+    rdir.mkdir(parents=True, exist_ok=True)
+    path = rdir / f'prune_receipt_{now.strftime("%Y%m%d_%H%M%S")}.txt'
+    path.write_text(
+        format_prune_receipt(pruned_entries, bytes_pruned=bytes_pruned, now=now),
+        encoding='utf-8',
+    )
+    return path

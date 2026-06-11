@@ -31,6 +31,16 @@ except Exception:
     prune_archive = None
 
 try:
+    import archive_custody
+except Exception:
+    archive_custody = None
+
+try:
+    from ui.receipt_viewer import show_receipt
+except Exception:
+    show_receipt = None
+
+try:
     import startup_manager
 except Exception:
     startup_manager = None
@@ -627,8 +637,10 @@ class StartupManagerGUI(ctk.CTk):
              'Find registry entries pointing at missing files. Archive-first.'),
             ('🕐  Cleanroom Rewind', self.open_time_machine,
              'Roll back whole days of Cleanroom actions.'),
+            ('🗂️  Archive Browser', self.open_archive_browser_tab,
+             'Browse archived custody with local prune recommendations.'),
             ('🧾  Cleanroom Receipt', self.open_last_receipt,
-             'Open the receipt from your most recent cleanup.'),
+             'View the receipt from your most recent cleanup in-app.'),
             ('🔬  Custody Check', self.verify_custody,
              'Audit the entire history: prove every archived item\n'
              'is still on disk and restorable, right now.'),
@@ -734,8 +746,8 @@ class StartupManagerGUI(ctk.CTk):
         self.telemetry_btn = ttk.Button(actions, text='Telemetry', style='Action.TButton',
                                         command=self._show_telemetry_dialog)
         self.telemetry_btn.pack(side='left', padx=6)
-        self.prune_btn = ttk.Button(actions, text='Prune Archive…', style='Action.TButton',
-                                    command=self.prune_archive_dialog)
+        self.prune_btn = ttk.Button(actions, text='Archive Prune Recommendations…', style='Action.TButton',
+                                    command=self.open_archive_browser_tab)
         self.prune_btn.pack(side='left', padx=6)
         self.receipt_btn = ttk.Button(actions, text='Cleanroom Receipt', style='Action.TButton',
                                       command=self.open_last_receipt)
@@ -749,7 +761,9 @@ class StartupManagerGUI(ctk.CTk):
                           'Snapshot registry entries that verifiably point to missing files\n'
                           '(dead startup refs, broken App Paths, orphaned uninstallers).\n'
                           'Repairs are exported to .reg backups first — fully restorable.')
-        self._add_tooltip(self.prune_btn, 'Permanently delete archived files older than N days.')
+        self._add_tooltip(self.prune_btn,
+                          'Archive Prune Recommendations — permanently remove selected files\n'
+                          'from Cleanroom\'s archive custody only. Original live files are not touched.')
         self._add_tooltip(self.preview_receipt_btn, 'See what the receipt will record before archiving.')
         self._add_tooltip(self.schedule_btn, 'Schedule recurring cleanup runs via Task Scheduler.')
         self._add_tooltip(self.open_archive_btn, 'Open the configured archive folder in Explorer.')
@@ -826,8 +840,11 @@ class StartupManagerGUI(ctk.CTk):
         self.stat_act_total = self._stat_card(top, 'Actions logged')
         self.stat_act_present = self._stat_card(top, 'Restorable now')
         self.stat_act_bytes = self._stat_card(top, 'Bytes in custody')
+        self.stat_act_pruned = self._stat_card(top, 'Bytes pruned')
         self._add_tooltip(self.stat_act_bytes,
                           'Bytes in custody = verified files still restorable in the archive.')
+        self._add_tooltip(self.stat_act_pruned,
+                          'Bytes pruned = archive custody permanently removed (original files untouched).')
         ttk.Label(top, text='Reclaimable = current scan candidates · '
                             'Bytes in custody = verified restorable files · '
                             'Bytes moved = lifetime logged archive movement',
@@ -841,11 +858,17 @@ class StartupManagerGUI(ctk.CTk):
                    command=self.verify_custody).pack(side='left', padx=6)
         ttk.Button(bar, text='Proof Pack (HTML)', style='Primary.TButton',
                    command=self.export_audit).pack(side='left', padx=6)
+        ttk.Button(bar, text='Archive Browser', style='Action.TButton',
+                   command=self.open_archive_browser_tab).pack(side='left', padx=6)
         ttk.Label(bar, text='Every row is a real archived artifact — ✓ means it\'s still on disk.',
                   style='Info.TLabel').pack(side='left', padx=(12, 0))
 
-        wrap = ttk.Frame(self.activity_tab, style='Card.TFrame')
-        wrap.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        self.act_sub_notebook = ttk.Notebook(self.activity_tab)
+        self.act_sub_notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+
+        ledger_panel = ttk.Frame(self.act_sub_notebook, style='Card.TFrame')
+        self.act_sub_notebook.add(ledger_panel, text='  Activity Ledger  ')
+        wrap = ledger_panel
         cols = ('status', 'when', 'reason', 'source', 'size')
         self.activity_tree = ttk.Treeview(wrap, columns=cols, show='headings', selectmode='browse')
         for c, label, w in (('status', '', 36), ('when', 'When', 140), ('reason', 'Reason', 130),
@@ -863,6 +886,78 @@ class StartupManagerGUI(ctk.CTk):
             self.activity_tree, 'No Cleanroom actions logged yet.\n'
                                 'Run a cleanup — every move will appear here with proof status.')
         self._activity_feed = []
+        self._build_archive_browser_panel()
+
+    def _build_archive_browser_panel(self):
+        """In-app archive custody browser with local prune recommendations."""
+        panel = ttk.Frame(self.act_sub_notebook, style='Card.TFrame')
+        self.act_sub_notebook.add(panel, text='  Archive Browser  ')
+
+        head = ttk.Frame(panel, style='Content.TFrame')
+        head.pack(fill='x', padx=8, pady=(8, 4))
+        ttk.Label(head, text='Archive Browser', font=('Segoe UI', 12, 'bold'),
+                  background=BG).pack(side='left')
+        ttk.Label(head, text='Archive Prune Recommendations — archive custody only',
+                  style='Info.TLabel').pack(side='left', padx=(10, 0))
+
+        chip_row = ttk.Frame(panel, style='Content.TFrame')
+        chip_row.pack(fill='x', padx=8, pady=(0, 6))
+        self._archive_prune_filter = tk.StringVar(value='')
+        for label, value in (
+            ('All', ''), ('Safe to prune', archive_custody.PRUNE_SAFE if archive_custody else ''),
+            ('Review first', archive_custody.PRUNE_REVIEW if archive_custody else ''),
+            ('Keep in custody', archive_custody.PRUNE_KEEP if archive_custody else ''),
+        ):
+            ttk.Radiobutton(chip_row, text=label, value=value, variable=self._archive_prune_filter,
+                            command=self.refresh_archive_browser).pack(side='left', padx=(0, 8))
+
+        tree_wrap = ttk.Frame(panel)
+        tree_wrap.pack(fill='both', expand=True, padx=8, pady=(0, 6))
+        acols = ('when', 'src', 'dest', 'reason', 'size', 'restorable', 'receipt', 'prune_rank')
+        self.archive_tree = ttk.Treeview(tree_wrap, columns=acols, show='headings',
+                                         selectmode='extended')
+        headings = {
+            'when': 'Archived date', 'src': 'Original path', 'dest': 'Archive path',
+            'reason': 'Reason', 'size': 'Size', 'restorable': 'Restorable',
+            'receipt': 'Receipt', 'prune_rank': 'Prune rank',
+        }
+        widths = {'when': 130, 'src': 220, 'dest': 220, 'reason': 100, 'size': 72,
+                  'restorable': 72, 'receipt': 56, 'prune_rank': 110}
+        for c in acols:
+            self.archive_tree.heading(c, text=headings[c])
+            anchor = 'center' if c in ('size', 'restorable', 'receipt', 'prune_rank') else 'w'
+            stretch = c in ('src', 'dest')
+            self.archive_tree.column(c, width=widths[c], anchor=anchor, stretch=stretch)
+        vsb = ttk.Scrollbar(tree_wrap, orient='vertical', command=self.archive_tree.yview)
+        hsb = ttk.Scrollbar(tree_wrap, orient='horizontal', command=self.archive_tree.xview)
+        self.archive_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.archive_tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_wrap.grid_rowconfigure(0, weight=1)
+        tree_wrap.grid_columnconfigure(0, weight=1)
+        self.archive_tree.tag_configure('safe', foreground=ACCENT)
+        self.archive_tree.tag_configure('review', foreground=SEVERITY_COLORS['medium'])
+        self.archive_tree.tag_configure('keep', foreground=MUTED)
+        self.archive_empty = self._make_empty_hint(
+            self.archive_tree, 'No archive custody records yet.\n'
+                                'Archive files with Cleaner — evidence appears here.')
+        self._archive_records = []
+
+        actions = ttk.Frame(panel, style='Content.TFrame')
+        actions.pack(fill='x', padx=8, pady=(0, 8))
+        for txt, cmd in (
+            ('Restore Selected', self._archive_restore_selected),
+            ('Open Original Location', self._archive_open_original),
+            ('Open Archive Location', self._archive_open_archive),
+            ('Open Receipt', self._archive_open_receipt),
+            ('Copy Path', self._archive_copy_path),
+        ):
+            ttk.Button(actions, text=txt, style='Action.TButton', command=cmd).pack(side='left', padx=(0, 4))
+        ttk.Button(actions, text='Prune Selected from Archive', style='Primary.TButton',
+                   command=self.confirm_prune_selected).pack(side='right')
+        self.archive_status_lbl = ttk.Label(panel, text='', style='Info.TLabel')
+        self.archive_status_lbl.pack(anchor='w', padx=10, pady=(0, 8))
 
     def _stat_card(self, parent, caption):
         """White stat card with a big value label; returns the value label."""
@@ -980,7 +1075,14 @@ class StartupManagerGUI(ctk.CTk):
         preview = ('*** PREVIEW ONLY — nothing has been archived yet ***\n\n' + body)
 
         def _open_preview():
-            self._show_text_dialog('Cleanroom Receipt — Preview', preview)
+            try:
+                if show_receipt:
+                    show_receipt(self, preview, title='Cleanroom Receipt — Preview',
+                                 preview=True, bg=BG, card=CARD_BG, text_fg=TEXT)
+                else:
+                    raise RuntimeError('receipt viewer unavailable')
+            except Exception:
+                self._show_text_dialog('Cleanroom Receipt — Preview', preview)
 
         self._play_receipt_animation(
             'RECEIPT GENERATED',
@@ -2603,6 +2705,8 @@ class StartupManagerGUI(ctk.CTk):
         self.stat_act_total.config(text=str(summary['total_actions']))
         self.stat_act_present.config(text=str(summary['present']))
         self.stat_act_bytes.config(text=self._format_size(custody['bytes_in_custody']))
+        if hasattr(self, 'stat_act_pruned'):
+            self.stat_act_pruned.config(text=self._format_size(summary.get('bytes_pruned', 0)))
         self.act_status_lbl.config(
             text=f'Custody trust {trust}%' if custody['total'] else 'Awaiting first action')
         self._refresh_header_proof_badges()
@@ -2614,15 +2718,244 @@ class StartupManagerGUI(ctk.CTk):
                 continue
             when = (e.get('when') or '')[:19].replace('T', ' ')
             tag = 'present' if e.get('present') else 'missing'
+            if e.get('kind') == 'prune':
+                tag = 'missing'
             tree.insert('', 'end', iid=str(i),
                         values=('✓' if e.get('present') else '✗', when,
                                 e.get('reason', ''), e.get('src', ''),
                                 self._format_size(e.get('size', 0))),
                         tags=(tag,))
-        if any(e.get('kind') != 'restore' for e in feed):
+        if any(e.get('kind') not in ('restore',) for e in feed):
             self.activity_empty.place_forget()
         else:
             self.activity_empty.place(relx=0.5, rely=0.4, anchor='center')
+        self.refresh_archive_browser()
+
+    def open_archive_browser_tab(self):
+        self.tab_control.select(self.activity_tab)
+        if hasattr(self, 'act_sub_notebook'):
+            self.act_sub_notebook.select(1)
+        self.refresh_archive_browser()
+
+    def refresh_archive_browser(self):
+        if archive_custody is None or restore_module is None:
+            return
+        actions = []
+        if self.restore_log_path.exists():
+            try:
+                actions = restore_module.load_log(str(self.restore_log_path))
+            except Exception:
+                actions = []
+        cfg = self._load_cleanup_config() or {}
+        receipt_dir = brand.user_data_dir() / 'receipts'
+        records = archive_custody.build_archive_records(actions, receipt_dir=receipt_dir, config=cfg)
+        rank_filter = getattr(self, '_archive_prune_filter', None)
+        filt = rank_filter.get() if rank_filter else ''
+        if filt:
+            records = archive_custody.filter_by_prune_rank(records, filt)
+        self._archive_records = records
+
+        tree = self.archive_tree
+        tree.delete(*tree.get_children())
+        rank_tags = {
+            archive_custody.PRUNE_SAFE: 'safe',
+            archive_custody.PRUNE_REVIEW: 'review',
+            archive_custody.PRUNE_KEEP: 'keep',
+        }
+        for i, rec in enumerate(records):
+            when = (rec.get('when') or '')[:19].replace('T', ' ')
+            rp = rec.get('receipt_path')
+            tree.insert('', 'end', iid=str(i),
+                        values=(
+                            when,
+                            rec.get('src', ''),
+                            rec.get('dest', ''),
+                            rec.get('reason', ''),
+                            self._format_size(rec.get('size', 0)),
+                            'Yes' if rec.get('restorable') else 'No',
+                            'Yes' if rp else '—',
+                            rec.get('prune_rank', ''),
+                        ),
+                        tags=(rank_tags.get(rec.get('prune_rank'), 'review'),))
+        if records:
+            self.archive_empty.place_forget()
+        else:
+            self.archive_empty.place(relx=0.5, rely=0.4, anchor='center')
+        safe_n = sum(1 for r in records if r.get('prune_rank') == archive_custody.PRUNE_SAFE)
+        self.archive_status_lbl.config(
+            text=f'{len(records)} archive record(s) · {safe_n} marked Safe to prune (local rules only)')
+
+    def _selected_archive_records(self):
+        sel = self.archive_tree.selection()
+        out = []
+        for iid in sel:
+            try:
+                idx = int(iid)
+                if 0 <= idx < len(self._archive_records):
+                    out.append(self._archive_records[idx])
+            except ValueError:
+                pass
+        return out
+
+    def _archive_restore_selected(self):
+        recs = self._selected_archive_records()
+        if not recs:
+            messagebox.showinfo('Restore', 'Select archived item(s) to restore.')
+            return
+        if restore_module is None:
+            messagebox.showerror('Restore', 'Restore module unavailable.')
+            return
+        lines = [f'{r["dest"]}\n  → {r["src"]}' for r in recs[:12]]
+        if len(recs) > 12:
+            lines.append(f'… and {len(recs) - 12} more')
+        if not messagebox.askyesno(
+                'Restore Selected',
+                'Restore selected archived copies to their original paths?\n\n' + '\n'.join(lines)):
+            return
+
+        def work():
+            ok = fail = 0
+            msgs = []
+            for r in recs:
+                success, msg = self._smart_restore(r['src'], r['dest'], apply=True)
+                if success:
+                    ok += 1
+                else:
+                    fail += 1
+                    msgs.append(msg)
+            return ok, fail, msgs
+
+        def done(result, err):
+            if err is not None:
+                messagebox.showerror('Restore', str(err))
+                return
+            ok, fail, msgs = result
+            summary = f'Restored {ok} item(s).'
+            if fail:
+                summary += f' {fail} failed/skipped.'
+            messagebox.showinfo('Restore', summary + ('\n\n' + '\n'.join(msgs[:5]) if msgs else ''))
+            self.refresh_restore()
+            self.refresh_activity()
+
+        self._run_bg(work, done)
+
+    def _archive_open_original(self):
+        recs = self._selected_archive_records()
+        if not recs:
+            messagebox.showinfo('Archive Browser', 'Select a row first.')
+            return
+        src = Path(recs[0]['src'])
+        folder = src.parent if not str(recs[0]['src']).startswith('REGISTRY::') else None
+        if folder and folder.is_dir():
+            os.startfile(str(folder))
+        else:
+            messagebox.showinfo('Archive Browser', f'Original location not available:\n{recs[0]["src"]}')
+
+    def _archive_open_archive(self):
+        recs = self._selected_archive_records()
+        if not recs:
+            messagebox.showinfo('Archive Browser', 'Select a row first.')
+            return
+        dest = Path(recs[0]['dest'])
+        if dest.is_file():
+            os.startfile(str(dest.parent))
+        elif dest.is_dir():
+            os.startfile(str(dest))
+        else:
+            messagebox.showinfo('Archive Browser', f'Archive path not found:\n{recs[0]["dest"]}')
+
+    def _archive_open_receipt(self):
+        recs = self._selected_archive_records()
+        if not recs:
+            messagebox.showinfo('Archive Browser', 'Select a row first.')
+            return
+        rp = recs[0].get('receipt_path')
+        if not rp or not Path(rp).is_file():
+            messagebox.showinfo('Archive Browser', 'No linked receipt file for this entry.')
+            return
+        self._view_receipt_file(rp)
+
+    def _archive_copy_path(self):
+        recs = self._selected_archive_records()
+        if not recs:
+            return
+        text = recs[0].get('dest') or recs[0].get('src') or ''
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._set_status('Path copied to clipboard.')
+        except tk.TclError:
+            messagebox.showinfo('Copy Path', text)
+
+    def _view_receipt_file(self, path, preview=False):
+        if receipts_module is None:
+            messagebox.showerror('Receipt', 'Receipts module unavailable.')
+            return
+        try:
+            body = receipts_module.read_receipt(path)
+        except Exception as e:
+            messagebox.showerror('Receipt', f'Unable to read receipt:\n{e}')
+            return
+        if show_receipt:
+            show_receipt(self, body, receipt_path=path, preview=preview,
+                         bg=BG, card=CARD_BG, text_fg=TEXT)
+        else:
+            self._show_text_dialog('Cleanroom Receipt', body)
+
+    def confirm_prune_selected(self):
+        if archive_custody is None:
+            messagebox.showerror('Prune', 'Archive custody module unavailable.')
+            return
+        recs = self._selected_archive_records()
+        if not recs:
+            messagebox.showinfo('Archive Prune Recommendations',
+                                'Select archived file(s) to prune from custody.')
+            return
+        lines = [f'{self._format_size(r.get("size", 0))}  {r.get("dest")}' for r in recs[:15]]
+        if len(recs) > 15:
+            lines.append(f'… and {len(recs) - 15} more')
+        msg = (
+            'This permanently removes selected files from Cleanroom\'s archive.\n'
+            'Original live files are not touched.\n'
+            'Restoring these archived copies will no longer be possible after pruning.\n\n'
+            + '\n'.join(lines)
+        )
+        if not messagebox.askokcancel('Archive Prune Recommendations', msg):
+            return
+        if not messagebox.askokcancel(
+                'Confirm Prune',
+                f'Prune {len(recs)} archived file(s) from custody?\n\n'
+                'This cannot be undone. A Prune Receipt will be written.'):
+            return
+
+        log_path = self.restore_log_path
+
+        def work():
+            return archive_custody.apply_prune(
+                recs, log_path, receipt_dir=brand.user_data_dir() / 'receipts', dry_run=False)
+
+        def done(result, err):
+            if err is not None:
+                messagebox.showerror('Prune', str(err))
+                return
+            n = len(result.get('pruned', []))
+            freed = self._format_size(result.get('bytes_pruned', 0))
+            rp = result.get('receipt_path')
+            messagebox.showinfo('Prune Receipt',
+                                f'Pruned {n} archived file(s) ({freed}) from custody.\n'
+                                f'Original live files were not touched.')
+            if rp and Path(rp).is_file():
+                self._view_receipt_file(rp)
+            self.refresh_activity()
+            self.refresh_restore()
+
+        self._run_bg(work, done)
+
+    def prune_archive_dialog(self):
+        """Legacy entry — open Archive Browser with Safe to prune filter."""
+        if archive_custody and hasattr(self, '_archive_prune_filter'):
+            self._archive_prune_filter.set(archive_custody.PRUNE_SAFE)
+        self.open_archive_browser_tab()
 
     def export_audit(self):
         if audit_module is None or ledger_module is None or proof_module is None:
@@ -2735,7 +3068,7 @@ class StartupManagerGUI(ctk.CTk):
         btns.pack(fill='x', padx=16, pady=12)
         if receipt_path:
             ttk.Button(btns, text='Open Receipt', style='Action.TButton',
-                       command=lambda: os.startfile(str(receipt_path))).pack(side='left')
+                       command=lambda: self._view_receipt_file(receipt_path)).pack(side='left')
         ttk.Button(btns, text='View Activity Ledger', style='Action.TButton',
                    command=lambda: (dlg.destroy(), self.tab_control.select(self.activity_tab),
                                     self.refresh_activity())).pack(side='left', padx=6)
@@ -2752,10 +3085,7 @@ class StartupManagerGUI(ctk.CTk):
         if path is None:
             messagebox.showinfo('Receipt', 'No receipts yet — run a cleanup first.')
             return
-        try:
-            os.startfile(str(path))
-        except Exception as e:
-            messagebox.showerror('Receipt', f'Unable to open receipt:\n{e}')
+        self._view_receipt_file(path)
 
     # ------------------------------------------------------------------
     # Verify Custody (prove the reversibility promise on demand)
@@ -3443,115 +3773,6 @@ class StartupManagerGUI(ctk.CTk):
         schedule_btn.pack(side='right')
         ttk.Button(btns, text='Cancel', style='Action.TButton', command=dialog.destroy).pack(side='right', padx=(0, 6))
         hour_spin.focus_set()
-
-    # ------------------------------------------------------------------
-    # Archive pruning
-    # ------------------------------------------------------------------
-    def prune_archive_dialog(self):
-        if prune_archive is None:
-            messagebox.showerror('Prune', 'Prune module is unavailable.')
-            return
-        cfg = self._load_cleanup_config()
-        if cfg is None:
-            return
-        archive_dir = cfg.get('archive_dir')
-        if not archive_dir or not Path(archive_dir).exists():
-            messagebox.showinfo('Prune', f'Archive folder not found:\n{archive_dir or "(not configured)"}')
-            return
-
-        dlg = tk.Toplevel(self)
-        dlg.configure(bg=BG)
-        dlg.title('Prune Archive')
-        dlg.geometry('460x240')
-        dlg.resizable(False, False)
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-
-        ttk.Label(dlg, text='Prune old archived files', font=('Segoe UI', 12, 'bold')).pack(anchor='w', padx=14, pady=(14, 2))
-        ttk.Label(dlg, text=f'Archive: {archive_dir}', style='Info.TLabel', wraplength=420).pack(anchor='w', padx=14)
-        ttk.Label(dlg, text='Warning: pruning permanently deletes files from the archive.',
-                  style='Info.TLabel', foreground=SEVERITY_COLORS['high']).pack(anchor='w', padx=14, pady=(4, 8))
-
-        row = ttk.Frame(dlg)
-        row.pack(anchor='w', padx=14)
-        ttk.Label(row, text='Delete files older than').pack(side='left')
-        days_var = tk.IntVar(value=90)
-        ttk.Spinbox(row, from_=1, to=3650, textvariable=days_var, width=6).pack(side='left', padx=6)
-        ttk.Label(row, text='days').pack(side='left')
-
-        result_lbl = ttk.Label(dlg, text='Run a preview to see what would be removed.', style='Info.TLabel', wraplength=420)
-        result_lbl.pack(anchor='w', padx=14, pady=(10, 0))
-
-        btns = ttk.Frame(dlg)
-        btns.pack(side='bottom', fill='x', padx=14, pady=12)
-
-        def _collect(days, apply):
-            if apply and proof_module:
-                # Pruning really deletes, so prove it with OS-measured numbers.
-                volume = proof_module.volume_of(archive_dir)
-                before = proof_module.disk_free(volume)
-                paths = prune_archive.prune(Path(archive_dir), days, True)
-                return paths, proof_module.disk_free(volume) - before
-            paths = prune_archive.prune(Path(archive_dir), days, apply)
-            size = 0
-            if not apply:
-                for p in paths:
-                    try:
-                        size += Path(p).stat().st_size
-                    except Exception:
-                        pass
-            return paths, size
-
-        def on_preview():
-            preview_btn.config(state='disabled')
-            apply_btn.config(state='disabled')
-            result_lbl.config(text='Scanning archive...')
-
-            def done(result, err):
-                if not dlg.winfo_exists():
-                    return
-                preview_btn.config(state='normal')
-                apply_btn.config(state='normal')
-                if err is not None:
-                    result_lbl.config(text=f'Preview failed: {err}')
-                    return
-                paths, size = result
-                result_lbl.config(text=f'{len(paths)} file(s) older than {days_var.get()} days '
-                                       f'({self._format_size(size)}) would be permanently deleted.')
-
-            self._run_bg(lambda: _collect(int(days_var.get()), False), done)
-
-        def on_apply():
-            if not messagebox.askyesno('Prune archive',
-                                       f'Permanently delete archived files older than {days_var.get()} days?\n\nThis cannot be undone.',
-                                       parent=dlg):
-                return
-            apply_btn.config(state='disabled')
-            preview_btn.config(state='disabled')
-            result_lbl.config(text='Pruning...')
-
-            def done(result, err):
-                if not dlg.winfo_exists():
-                    return
-                preview_btn.config(state='normal')
-                apply_btn.config(state='normal')
-                if err is not None:
-                    result_lbl.config(text=f'Prune failed: {err}')
-                    return
-                paths, measured = result
-                freed = (f' OS-measured space freed: {self._format_size(measured)}.'
-                         if measured > 0 else '')
-                self._set_status(f'Archive pruned: {len(paths)} file(s) deleted.{freed}')
-                result_lbl.config(text=f'Done. {len(paths)} file(s) deleted.{freed}')
-
-            self._run_bg(lambda: _collect(int(days_var.get()), True), done)
-
-        preview_btn = ttk.Button(btns, text='Preview (Dry-run)', style='Action.TButton', command=on_preview)
-        preview_btn.pack(side='left')
-        apply_btn = ttk.Button(btns, text='Prune Now', style='Primary.TButton', command=on_apply)
-        apply_btn.pack(side='right')
-        ttk.Button(btns, text='Close', style='Action.TButton', command=dlg.destroy).pack(side='right', padx=(0, 6))
 
     # ------------------------------------------------------------------
     # Telemetry dialog

@@ -55,6 +55,7 @@ UI_FILES = (
     ROOT / 'startup_manager_gui.py',
     ROOT / 'recommendations.py',
     ROOT / 'receipts.py',
+    ROOT / 'archive_custody.py',
     ROOT / 'opt_in_gui.py',
 )
 
