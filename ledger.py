@@ -5,8 +5,9 @@ Turns the cleanup log into a chronological feed with per-item custody
 status (artifact still on disk?) and a suite-wide trust score.
 """
 from collections import Counter
-from datetime import datetime
 from pathlib import Path
+
+from receipt_core.trust import format_trust_score_display, trust_score
 
 
 def _present(dest):
@@ -99,20 +100,9 @@ def summarize_feed(events):
     }
 
 
-def trust_score(present, total):
-    """0–100 custody trust score. Empty log → 100 (nothing broken yet)."""
-    if total <= 0:
-        return 100
-    return int(round(100 * present / total))
-
-
-def format_trust_score_display(verified_count, total_count, missing_count):
-    """Proof/UI trust string — never perfect when any archive item is missing."""
-    if total_count <= 0:
-        return '100/100'
-    raw_score = (verified_count / total_count) * 100
-    if missing_count > 0:
-        score = min(int(raw_score), 99)
-    else:
-        score = int(round(raw_score))
-    return f'{score}/100'
+__all__ = (
+    'build_activity_feed',
+    'format_trust_score_display',
+    'summarize_feed',
+    'trust_score',
+)
