@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-12 — v1.0.3 public docs polish (post-release)
+
+- README: local-only framing, v1.0.3 highlights table, latest release link, 160+ tests.
+- RELEASE-v1.0.3: tightened public messaging for archive browser, receipts, prune proof, Force Remove.
+
 ## 2026-06-12 — v1.0.3 archive browser, proof honesty, uninstaller guidance
 
 - Archive Browser + in-app receipts (view, copy, open file/folder).
