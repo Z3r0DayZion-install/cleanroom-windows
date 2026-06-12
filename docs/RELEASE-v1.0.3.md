@@ -1,8 +1,8 @@
-Cleanroom is a Windows cleaner that archives first, proves every action, and lets you roll back.
+**Cleanroom is a local-only Windows cleanup utility that archives first, proves every action, and lets you restore before anything is permanently pruned.**
 
-This is not a fake "1,247 issues fixed" optimizer. Cleanroom produces receipts, custody checks, activity ledgers, proof packs, and restore paths.
+This is not a fake "1,247 issues fixed" optimizer. Cleanroom produces receipts, custody checks, activity ledgers, proof packs, and restore paths — all on your PC, with no cloud account or telemetry.
 
-**v1.0.3** ships archive browser + in-app receipts, archive prune proof, Proof Pack trust-score honesty, and local-only uninstaller guidance with a safer Force Remove flow — built and published by CI from tag `v1.0.3`.
+**v1.0.3** ships the proof surface that matches the engine: in-app receipts, Archive Browser, archive-only prune receipts, honest Proof Pack trust scores, local program guidance, and a safer Force Remove flow. Built and published by CI from tag `v1.0.3`.
 
 ## Screenshots (proof-loop UI)
 
@@ -14,11 +14,11 @@ This is not a fake "1,247 issues fixed" optimizer. Cleanroom produces receipts, 
 
 ## Highlights
 
-- **Archive Browser** — browse archived artifacts in-app with custody status
 - **In-app receipts** — view, copy, and open cleanup/prune receipts without leaving the app
-- **Archive prune receipts** — custody-only prune with tiered recommendations and prune proof
-- **Proof Pack trust score** — never shows `100/100` when any archived artifact is missing
-- **Uninstaller guidance** — local-only program advice (no cloud lookup)
+- **Archive Browser** — browse archived artifacts with custody status in the Activity tab
+- **Archive-only prune receipts** — tiered recommendations with prune proof; nothing silently deleted
+- **Proof Pack trust-score honesty** — never shows `100/100` when any archived artifact is missing
+- **Local-only program guidance** — uninstall advice from local heuristics, no cloud lookup
 - **Safer Force Remove** — preview targets, confirmation required, registry export before delete, install folders archived before removal
 - Archive-first cleanup, custody trust, Cleanroom Rewind — unchanged doctrine
 
