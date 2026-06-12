@@ -54,3 +54,4 @@ def test_installer_registers_cleanroom_receipt_association():
     assert 'CleanroomReceipt' in content
     assert '--open-receipt' in content
     assert '%1' in content
+    assert 'uninsdeletekey' in content
