@@ -14,28 +14,28 @@ It is not a fake "1,247 issues fixed" optimizer. Every cleanup, uninstall leftov
 
 Repository: [`cleanroom-windows`](https://github.com/Z3r0DayZion-install/cleanroom-windows)
 
-**Latest release:** [Cleanroom v1.0.3](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/tag/v1.0.3) — `Cleanroom-Setup-1.0.3.exe` + `SHA256SUMS.txt` (CI-built, attestable)
+**Latest release:** [Cleanroom v1.0.4](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/tag/v1.0.4) — `Cleanroom-Setup-1.0.4.exe` + `SHA256SUMS.txt` (CI-built, attestable)
 
-![Cleanroom Review](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/download/v1.0.3/cleanroom-review.png)
+![Cleanroom Review](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/download/v1.0.4/cleanroom-review.png)
 
-![Cleanroom Activity Ledger](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/download/v1.0.3/cleanroom-activity-ledger.png)
+![Cleanroom Activity Ledger](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/download/v1.0.4/cleanroom-activity-ledger.png)
 
-![Cleanroom Proof Pack Demo](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/download/v1.0.3/cleanroom-proof-pack-demo.png)
+![Cleanroom Proof Pack Demo](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/download/v1.0.4/cleanroom-proof-pack-demo.png)
 
 ---
 
-## What's new in v1.0.3
+## What's new in v1.0.4
 
 | Area | What you get |
 |------|----------------|
-| **In-app receipts** | View, copy, and open cleanup/prune receipts without leaving the app |
-| **Archive Browser** | Browse archived artifacts in the Activity tab with custody status |
-| **Archive-only prune** | Tiered prune recommendations with prune receipts — custody proof, not silent delete |
-| **Proof Pack honesty** | Trust score never shows `100/100` when any archived artifact is missing |
-| **Program guidance** | Local-only uninstall advice — no cloud lookup |
-| **Safer Force Remove** | Preview targets, confirmation required, registry export before delete, install folders archived before removal |
+| **Responsive layout** | Important controls stay visible at common window sizes and 150% scaling |
+| **Tray icon** | Open, Hide to tray, Show, Latest Receipt, Proof Pack, Quit — explicit only |
+| **`.cleanroom-receipt`** | Cleanroom-owned receipt file type; plain-text, human-readable |
+| **Double-click receipts** | Shell association opens the in-app receipt viewer, not Notepad |
+| **Legacy receipts** | Older `.txt` receipt files remain readable |
+| **Installer association** | Registers and uninstalls `.cleanroom-receipt` cleanly |
 
-Full release notes: [`docs/RELEASE-v1.0.3.md`](docs/RELEASE-v1.0.3.md)
+Full release notes: [`docs/RELEASE-v1.0.4.md`](docs/RELEASE-v1.0.4.md)
 
 ---
 
@@ -80,7 +80,7 @@ python -m pip install -r requirements.txt
 python startup_manager_gui.py
 ```
 
-Or install the latest release: [v1.0.3](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/tag/v1.0.3).
+Or install the latest release: [v1.0.4](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases/tag/v1.0.4).
 
 ### Tests
 
@@ -94,15 +94,15 @@ python -m pytest -p no:xonsh tests/
 powershell -ExecutionPolicy Bypass -File build_exe.ps1
 powershell -ExecutionPolicy Bypass -File build_installer.ps1
 # -> dist\Cleanroom\Cleanroom.exe
-# -> dist\Cleanroom-Setup-1.0.3.exe
+# -> dist\Cleanroom-Setup-1.0.4.exe
 ```
 
 ### Verify provenance
 
-Release artifacts are built by GitHub Actions and include artifact attestations. After downloading `Cleanroom-Setup-1.0.3.exe` from [Releases](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases):
+Release artifacts are built by GitHub Actions and include artifact attestations. After downloading `Cleanroom-Setup-1.0.4.exe` from [Releases](https://github.com/Z3r0DayZion-install/cleanroom-windows/releases):
 
 ```powershell
-gh attestation verify .\Cleanroom-Setup-1.0.3.exe --repo Z3r0DayZion-install/cleanroom-windows
+gh attestation verify .\Cleanroom-Setup-1.0.4.exe --repo Z3r0DayZion-install/cleanroom-windows
 ```
 
 Compare the SHA256 hash against `SHA256SUMS.txt` attached to the same release.
