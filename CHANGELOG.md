@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-06-12 — v1.0.4 Windows shell UX (tray + receipt file type)
+
+- Responsive layout fix so important controls stay visible at common sizes and 150% scaling.
+- Windows notification-area tray icon with Open / Hide / Show / Latest Receipt / Proof Pack / Quit.
+- New `.cleanroom-receipt` file type for cleanup and prune receipts; legacy `.txt` receipts remain readable.
+- Double-click `.cleanroom-receipt` opens Cleanroom receipt viewer via `--open-receipt` CLI path.
+- Installer registers and uninstalls `.cleanroom-receipt` file association cleanly.
+
 ## 2026-06-12 — v1.0.3 public docs polish (post-release)
 
 - README: local-only framing, v1.0.3 highlights table, latest release link, 160+ tests.
