@@ -38,6 +38,22 @@ def build_activity_feed(actions):
                 'kind': 'restore',
             })
             continue
+        if raw.get('action') == 'prune':
+            ts = raw.get('timestamp') or raw.get('time') or raw.get('when')
+            try:
+                size = int(raw.get('size') or 0)
+            except (TypeError, ValueError):
+                size = 0
+            events.append({
+                'when': ts,
+                'src': raw.get('src') or '',
+                'dest': raw.get('dest') or '',
+                'reason': 'prune-archive',
+                'size': size,
+                'present': False,
+                'kind': 'prune',
+            })
+            continue
         src = (raw.get('src') or raw.get('src_path') or raw.get('source')
                or raw.get('original') or '')
         dest = (raw.get('dest') or raw.get('dest_path') or raw.get('target')
@@ -70,6 +86,7 @@ def summarize_feed(events):
     missing = len(restorable) - present
     bytes_moved = sum(e.get('size', 0) for e in restorable)
     reasons = Counter(e.get('reason', 'other') for e in restorable)
+    prune_events = [e for e in events if e.get('kind') == 'prune']
     return {
         'total_actions': len(restorable),
         'present': present,
@@ -77,6 +94,8 @@ def summarize_feed(events):
         'bytes_moved': bytes_moved,
         'reasons': reasons,
         'restore_events': sum(1 for e in events if e.get('kind') == 'restore'),
+        'prune_events': len(prune_events),
+        'bytes_pruned': sum(e.get('size', 0) for e in prune_events),
     }
 
 
