@@ -5,7 +5,7 @@ import brand
 import customtkinter as ctk
 from ui import ctk_theme
 from ui.launcher import run_launch_splash
-from ui.window_geometry import apply_window_geometry, bind_window_tracking, animations_disabled
+from ui.window_geometry import apply_window_geometry, bind_window_tracking, animations_disabled, MAX_SIZE
 from ui.receipt_animation import (
     ReceiptPrinterPanel,
     DEFAULT_LINES,
@@ -512,7 +512,10 @@ class StartupManagerGUI(ctk.CTk):
             else:
                 self._hdr_badges.grid(row=0, column=0, sticky='w')
                 self._hdr_hero.grid(row=0, column=1, sticky='e', padx=(8, 0), pady=0)
-        tree_rows = max(5, min(16, (h - 380) // 26))
+        if hasattr(self, '_body_grid'):
+            center_w = min(max(w - 24, 960), MAX_SIZE[0])
+            self._body_grid.grid_columnconfigure(1, minsize=center_w)
+        tree_rows = max(5, min(14, (h - 380) // 26))
         if hasattr(self, 'rec_tree'):
             self.rec_tree.configure(height=tree_rows)
         if hasattr(self, 'archive_tree'):
@@ -675,9 +678,21 @@ class StartupManagerGUI(ctk.CTk):
     # Widget construction
     # ------------------------------------------------------------------
     def create_widgets(self):
-        self._build_header()
-        self._build_context_bar()
-        main = ttk.Frame(self)
+        self._body_grid = ttk.Frame(self)
+        self._body_grid.pack(fill='both', expand=True)
+        self._body_grid.grid_rowconfigure(0, weight=1)
+        self._body_grid.grid_columnconfigure(0, weight=1)
+        self._body_grid.grid_columnconfigure(1, weight=0)
+        self._body_grid.grid_columnconfigure(2, weight=1)
+        ttk.Frame(self._body_grid).grid(row=0, column=0, sticky='nsew')
+        self._body_center = ttk.Frame(self._body_grid)
+        self._body_center.grid(row=0, column=1, sticky='nsew')
+        ttk.Frame(self._body_grid).grid(row=0, column=2, sticky='nsew')
+
+        shell = self._body_center
+        self._build_header(shell)
+        self._build_context_bar(shell)
+        main = ttk.Frame(shell)
         main.pack(fill='both', expand=True, padx=10, pady=(0, 0))
         self._build_sidebar(main)
 
@@ -716,6 +731,7 @@ class StartupManagerGUI(ctk.CTk):
         self.tab_control.bind('<<NotebookTabChanged>>', self._sync_nav_buttons)
         self._sync_nav_buttons()
         self._update_context_panel()
+        self.after(50, self._update_responsive_layout)
 
     def _load_logo(self, px=36):
         """Load app icon scaled to roughly px pixels; None if unavailable."""
@@ -741,8 +757,9 @@ class StartupManagerGUI(ctk.CTk):
         except Exception:
             return None
 
-    def _build_header(self):
-        top = ctk_theme.frame(self, BG)
+    def _build_header(self, parent=None):
+        host = parent or self
+        top = ctk_theme.frame(host, BG)
         top.pack(fill='x', padx=12, pady=(6, 2))
 
         head_row = ctk_theme.frame(top, BG)
@@ -855,9 +872,10 @@ class StartupManagerGUI(ctk.CTk):
                           f"Theme: {PALETTES[CURRENT_THEME]['LABEL']} — click for "
                           f"{PALETTES[nxt]['LABEL']}. All themes are in Settings.")
 
-    def _build_context_bar(self):
+    def _build_context_bar(self, parent=None):
         """Compact one-line hint for the active tab — sidebar handles navigation."""
-        bar = ctk_theme.frame(self, SIDEBAR_BG, corner_radius=8)
+        host = parent or self
+        bar = ctk_theme.frame(host, SIDEBAR_BG, corner_radius=8)
         bar.pack(fill='x', padx=12, pady=(0, 6))
         row = ctk_theme.frame(bar, SIDEBAR_BG)
         row.pack(fill='x', padx=12, pady=6)
@@ -1079,34 +1097,27 @@ class StartupManagerGUI(ctk.CTk):
         qa.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 4))
         qa_inner = ttk.Frame(qa, style='Card.TFrame')
         qa_inner.pack(fill='x', padx=10, pady=6)
-        qa_primary = ttk.Frame(qa_inner, style='Card.TFrame')
-        qa_primary.pack(fill='x')
-        self.schedule_btn = ttk.Button(qa_primary, text='Schedule Cleanup', style='Action.TButton',
-                                       command=self.schedule_optimization)
-        self.schedule_btn.pack(side='left', padx=(0, 6))
-        self.preview_receipt_btn = ttk.Button(qa_primary, text='Preview Receipt', style='Primary.TButton',
-                                              command=self.preview_cleanup_receipt)
-        self.preview_receipt_btn.pack(side='left', padx=(0, 6))
-        self.open_archive_btn = ttk.Button(qa_primary, text='Open Archive Folder', style='Action.TButton',
-                                           command=self.open_archive_folder)
-        self.open_archive_btn.pack(side='left', padx=(0, 6))
-        self.prune_btn = ttk.Button(qa_primary, text='Delete from Archive…', style='Action.TButton',
-                                    command=self.open_archive_browser_tab)
-        self.prune_btn.pack(side='left', padx=(0, 6))
-        qa_secondary = ttk.Frame(qa_inner, style='Card.TFrame')
-        qa_secondary.pack(fill='x', pady=(4, 0))
-        self.open_log_btn = ttk.Button(qa_secondary, text='Open Cleanup Log', style='Action.TButton',
-                                      command=self.open_cleanup_log)
-        self.open_log_btn.pack(side='left', padx=(0, 6))
-        self.receipt_btn = ttk.Button(qa_secondary, text='Cleanroom Receipt', style='Action.TButton',
-                                     command=self.open_last_receipt)
-        self.receipt_btn.pack(side='left', padx=(0, 6))
-        self.reg_health_btn = ttk.Button(qa_secondary, text='Registry Snapshot…', style='Action.TButton',
-                                         command=self.open_registry_health)
-        self.reg_health_btn.pack(side='left', padx=(0, 6))
-        self.telemetry_btn = ttk.Button(qa_secondary, text='Telemetry', style='Action.TButton',
-                                        command=self._show_telemetry_dialog)
-        self.telemetry_btn.pack(side='left')
+        qa_grid = ttk.Frame(qa_inner, style='Card.TFrame')
+        qa_grid.pack(fill='x')
+        qa_specs = (
+            ('Schedule Cleanup', self.schedule_optimization, 'Action.TButton'),
+            ('Preview Receipt', self.preview_cleanup_receipt, 'Primary.TButton'),
+            ('Open Archive Folder', self.open_archive_folder, 'Action.TButton'),
+            ('Delete from Archive…', self.open_archive_browser_tab, 'Action.TButton'),
+            ('Open Cleanup Log', self.open_cleanup_log, 'Action.TButton'),
+            ('Cleanroom Receipt', self.open_last_receipt, 'Action.TButton'),
+            ('Registry Snapshot…', self.open_registry_health, 'Action.TButton'),
+            ('Telemetry', self._show_telemetry_dialog, 'Action.TButton'),
+        )
+        btn_refs = []
+        for i, (label, cmd, style) in enumerate(qa_specs):
+            btn = ttk.Button(qa_grid, text=label, command=cmd, style=style)
+            btn.grid(row=i // 4, column=i % 4, sticky='ew', padx=3, pady=2)
+            btn_refs.append(btn)
+        for col in range(4):
+            qa_grid.columnconfigure(col, weight=1)
+        (self.schedule_btn, self.preview_receipt_btn, self.open_archive_btn, self.prune_btn,
+         self.open_log_btn, self.receipt_btn, self.reg_health_btn, self.telemetry_btn) = btn_refs
         self._add_tooltip(self.preview_receipt_btn, 'See what the receipt will record before archiving.')
         self._add_tooltip(self.schedule_btn, 'Schedule recurring cleanup runs via Task Scheduler.')
         self._add_tooltip(self.open_archive_btn, 'Open the configured archive folder in Explorer.')
