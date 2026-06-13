@@ -4,9 +4,9 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-DEFAULT_SIZE = (1180, 720)
-MIN_SIZE = (960, 580)
-MAX_SIZE = (1280, 820)
+DEFAULT_SIZE = (1050, 700)
+MIN_SIZE = (920, 560)
+MAX_SIZE = (1080, 780)
 MAX_HEIGHT_RATIO = 0.72  # prevent tall skinny windows (h/w)
 MARGIN = 28
 TASKBAR_RESERVE = 52
@@ -75,7 +75,10 @@ def apply_window_geometry(widget, prefs: dict | None = None) -> None:
     widget.minsize(*MIN_SIZE)
     try:
         sw, avail_h, margin, _ = _screen_box(widget)
-        widget.maxsize(sw, avail_h)
+        if maximized:
+            widget.maxsize(sw, avail_h)
+        else:
+            widget.maxsize(MAX_SIZE[0], min(MAX_SIZE[1], avail_h))
     except Exception:
         pass
     widget.geometry(f'{w}x{h}+{x}+{y}')

@@ -513,9 +513,13 @@ class StartupManagerGUI(ctk.CTk):
                 self._hdr_badges.grid(row=0, column=0, sticky='w')
                 self._hdr_hero.grid(row=0, column=1, sticky='e', padx=(8, 0), pady=0)
         if hasattr(self, '_body_grid'):
-            center_w = min(max(w - 24, 960), MAX_SIZE[0])
+            center_w = min(MAX_SIZE[0], max(920, w - 48))
+            self._body_center.configure(width=center_w)
             self._body_grid.grid_columnconfigure(1, minsize=center_w)
         tree_rows = max(5, min(14, (h - 380) // 26))
+        if hasattr(self, 'cleanup_tree'):
+            path_w = max(160, min(520, (getattr(self, '_body_center', None) or self).winfo_width() - 300))
+            self.cleanup_tree.column('path', width=path_w)
         if hasattr(self, 'rec_tree'):
             self.rec_tree.configure(height=tree_rows)
         if hasattr(self, 'archive_tree'):
@@ -685,8 +689,9 @@ class StartupManagerGUI(ctk.CTk):
         self._body_grid.grid_columnconfigure(1, weight=0)
         self._body_grid.grid_columnconfigure(2, weight=1)
         ttk.Frame(self._body_grid).grid(row=0, column=0, sticky='nsew')
-        self._body_center = ttk.Frame(self._body_grid)
-        self._body_center.grid(row=0, column=1, sticky='nsew')
+        self._body_center = tk.Frame(self._body_grid, bg=BG, width=MAX_SIZE[0])
+        self._body_center.grid(row=0, column=1, sticky='ns')
+        self._body_center.grid_propagate(False)
         ttk.Frame(self._body_grid).grid(row=0, column=2, sticky='nsew')
 
         shell = self._body_center
@@ -1822,14 +1827,14 @@ class StartupManagerGUI(ctk.CTk):
         self._add_tooltip(self.copy_command_detail, 'Copy the selected command from the detail panel.')
 
     def _build_cleaner_tab(self):
-        header = ttk.Frame(self.cleanup_tab, style='Content.TFrame')
-        header.pack(fill='x', padx=10, pady=10)
-        ttk.Label(header, text='Cleaner', style='Header.TLabel').pack(anchor='w')
-        ttk.Label(header, text='Scan configured folders and move reviewed files into custody.',
-                  style='SubHeader.TLabel').pack(anchor='w', pady=(4, 0))
+        self.cleanup_tab.grid_rowconfigure(2, weight=1)
+        self.cleanup_tab.grid_columnconfigure(0, weight=1)
 
+        header = ttk.Frame(self.cleanup_tab, style='Content.TFrame')
+        header.grid(row=0, column=0, sticky='ew', padx=10, pady=(6, 4))
+        ttk.Label(header, text='Cleaner', style='Header.TLabel').pack(anchor='w')
         summary = ttk.Frame(header, style='Content.TFrame')
-        summary.pack(anchor='w', pady=(8, 0))
+        summary.pack(anchor='w', pady=(4, 0))
         self.cleanup_count_label = ttk.Label(summary, text='Candidates: 0', style='Badge.TLabel')
         self.cleanup_size_label = ttk.Label(summary, text='Reclaimable: 0B', style='Badge.TLabel')
         self.cleanup_archive_label = ttk.Label(summary, text='Archive: —', style='Badge.TLabel')
@@ -1838,7 +1843,7 @@ class StartupManagerGUI(ctk.CTk):
         self.cleanup_archive_label.pack(side='left')
 
         controls = ttk.Frame(self.cleanup_tab, style='Content.TFrame')
-        controls.pack(fill='x', padx=10, pady=(0, 6))
+        controls.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 4))
         btn_row = ttk.Frame(controls, style='Content.TFrame')
         btn_row.pack(fill='x')
         self.scan_btn = ttk.Button(btn_row, text='Scan Now', style='Primary.TButton', command=self.refresh_cleanup)
@@ -1859,18 +1864,19 @@ class StartupManagerGUI(ctk.CTk):
         self.cleanup_progress = ttk.Progressbar(progress_row, mode='indeterminate', length=200)
 
         cleanup_frame = ttk.Frame(self.cleanup_tab)
-        cleanup_frame.pack(fill='both', expand=True, padx=10, pady=(6, 10))
+        cleanup_frame.grid(row=2, column=0, sticky='nsew', padx=10, pady=(4, 4))
+        cleanup_frame.grid_rowconfigure(0, weight=1)
+        cleanup_frame.grid_columnconfigure(0, weight=1)
         cleanup_cols = ('sel', 'reason', 'size', 'path')
         self.cleanup_tree = ttk.Treeview(cleanup_frame, columns=cleanup_cols, show='headings', selectmode='browse')
         self.cleanup_tree.heading('sel', text='✓', command=self._toggle_all_cleanup_selection)
         self.cleanup_tree.heading('reason', text='Reason')
         self.cleanup_tree.heading('size', text='Size')
         self.cleanup_tree.heading('path', text='Path')
-        self.cleanup_tree.column('sel', width=36, anchor='center', stretch=False)
-        self.cleanup_tree.column('reason', width=120, anchor='w', stretch=False)
-        self.cleanup_tree.column('size', width=90, anchor='center', stretch=False)
-        self.cleanup_tree.column('path', width=400, anchor='w', stretch=True)
-        self.cleanup_tree.pack(fill='both', expand=True, side='left')
+        self.cleanup_tree.column('sel', width=36, anchor='center', stretch=False, minwidth=36)
+        self.cleanup_tree.column('reason', width=110, anchor='w', stretch=False, minwidth=80)
+        self.cleanup_tree.column('size', width=72, anchor='center', stretch=False, minwidth=60)
+        self.cleanup_tree.column('path', width=320, anchor='w', stretch=True, minwidth=120)
         self.cleanup_tree.tag_configure('oddrow', background=CARD_BG)
         self.cleanup_tree.tag_configure('evenrow', background=ROW_ALT)
         self.cleanup_tree.bind('<Button-1>', self._on_cleanup_click)
@@ -1883,11 +1889,12 @@ class StartupManagerGUI(ctk.CTk):
         cleanup_vscroll = ttk.Scrollbar(cleanup_frame, orient='vertical', command=self.cleanup_tree.yview)
         cleanup_hscroll = ttk.Scrollbar(cleanup_frame, orient='horizontal', command=self.cleanup_tree.xview)
         self.cleanup_tree.configure(yscrollcommand=cleanup_vscroll.set, xscrollcommand=cleanup_hscroll.set)
-        cleanup_vscroll.pack(side='right', fill='y')
-        cleanup_hscroll.pack(side='bottom', fill='x')
+        self.cleanup_tree.grid(row=0, column=0, sticky='nsew')
+        cleanup_vscroll.grid(row=0, column=1, sticky='ns')
+        cleanup_hscroll.grid(row=1, column=0, sticky='ew')
 
         status = ttk.Frame(self.cleanup_tab)
-        status.pack(fill='x', padx=10, pady=(0, 10))
+        status.grid(row=3, column=0, sticky='ew', padx=10, pady=(0, 8))
         self.cleanup_status_lbl = ttk.Label(status, text='Ready to scan.', style='Info.TLabel')
         self.cleanup_status_lbl.pack(side='left')
         self._add_tooltip(self.scan_btn, 'Scan configured folders for cleanup candidates.')
