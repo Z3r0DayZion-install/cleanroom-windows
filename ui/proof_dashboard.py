@@ -337,6 +337,65 @@ def settings_sidebar_nav(
     return buttons
 
 
+def brand_identity_block(
+    parent,
+    *,
+    bg: str,
+    accent: str,
+    accent_soft: str,
+    text_color: str,
+    muted: str,
+    logo_photo=None,
+    default_title: str = 'Cleanroom',
+    default_status: str = 'Ready to prove your cleanup.',
+) -> dict:
+    """Product identity strip: logo, dynamic title/status, pill badge, accent line."""
+    wrap = ctk_theme.frame(parent, bg, corner_radius=10)
+    inner = ctk_theme.frame(wrap, bg)
+    inner.pack(fill='x', padx=10, pady=(12, 10))
+
+    top_row = ctk_theme.frame(inner, bg)
+    top_row.pack(fill='x')
+
+    if logo_photo is not None:
+        logo_lbl = tk.Label(top_row, image=logo_photo, bg=bg)
+        logo_lbl.image = logo_photo
+        logo_lbl.pack(side='left', padx=(0, 8))
+
+    text_col = ctk_theme.frame(top_row, bg)
+    text_col.pack(side='left', fill='x', expand=True)
+
+    title_lbl = ctk_theme.label(
+        text_col, default_title, text_color=text_color, font_size=14, weight='bold',
+    )
+    title_lbl.pack(anchor='w')
+    status_lbl = ctk_theme.label(
+        text_col, default_status, text_color=muted, font_size=9,
+        wraplength=168, justify='left',
+    )
+    status_lbl.pack(anchor='w', pady=(2, 0))
+
+    pill_frame = ctk_theme.frame(inner, accent_soft, corner_radius=10)
+    pill_frame.pack(anchor='w', pady=(8, 0))
+    pill_lbl = ctk_theme.label(
+        pill_frame, 'Local-only proof', text_color=accent, font_size=9, weight='bold',
+    )
+    pill_lbl.pack(padx=8, pady=3)
+
+    accent_line = ctk_theme.frame(inner, accent, corner_radius=1)
+    accent_line.configure(height=2)
+    accent_line.pack(fill='x', pady=(10, 0))
+
+    return {
+        'frame': wrap,
+        'title_lbl': title_lbl,
+        'status_lbl': status_lbl,
+        'pill_lbl': pill_lbl,
+        'pill_frame': pill_frame,
+        'accent_line': accent_line,
+    }
+
+
 def sidebar_section(parent, title: str, *, sidebar_bg: str, muted: str) -> ctk.CTkFrame:
     """Sidebar group label + container."""
     ctk_theme.label(

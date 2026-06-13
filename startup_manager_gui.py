@@ -18,6 +18,7 @@ from ui.receipt_animation import (
 from ui.proof_dashboard import (
     CommandBar,
     ProofDrawer,
+    brand_identity_block,
     collapsible_section,
     proof_card,
     recent_proof_tile,
@@ -367,8 +368,11 @@ class StartupManagerGUI(ctk.CTk):
         self._cached_scan_at = ''
         self._archive_context_menu = None
         self._restore_context_menu = None
+        self._archive_busy = False
         self._chunk_tokens = {}
         self._page_is_dashboard = True
+        self._brand_phase = None
+        self._settings_dirty = False
         self.protocol('WM_DELETE_WINDOW', self._on_window_close)
         self.after(50, self._poll_bg_queue)
 
@@ -456,6 +460,7 @@ class StartupManagerGUI(ctk.CTk):
         self._init_tray()
         self._apply_initial_tab()
         self._update_page_chrome()
+        self._update_brand_identity()
         self.after(250, self._post_paint_launch_tasks)
 
     def _scan_on_startup(self) -> bool:
@@ -586,17 +591,13 @@ class StartupManagerGUI(ctk.CTk):
             self.ctx_desc_lbl.configure(wraplength=wrap)
         if hasattr(self, 'ctx_next_lbl'):
             self.ctx_next_lbl.configure(wraplength=max(280, min(720, w - 340)))
-        if hasattr(self, 'ctx_subtitle_lbl'):
+        if getattr(self, 'ctx_subtitle_lbl', None) is not None:
             if h < 680:
                 self.ctx_subtitle_lbl.pack_forget()
             else:
                 self.ctx_subtitle_lbl.pack(side='left', padx=(8, 0))
-        if hasattr(self, '_hdr_tagline_lbl'):
-            self._hdr_tagline_lbl.configure(wraplength=max(360, w - 80))
-            if h < 700:
-                self._hdr_tagline_lbl.pack_forget()
-            else:
-                self._hdr_tagline_lbl.pack(anchor='w', pady=(4, 0))
+        if hasattr(self, '_brand_status_lbl'):
+            self._brand_status_lbl.configure(wraplength=max(140, min(168, w - 60)))
         if hasattr(self, '_proof_flow_lbl'):
             if w < 900 or h < 640:
                 self._proof_flow_lbl.pack_forget()
@@ -1016,8 +1017,8 @@ class StartupManagerGUI(ctk.CTk):
                 with PILImage.open(path) as img:
                     img = img.convert('RGBA')
                     img.thumbnail((px, px), PILImage.LANCZOS)
-                    return PILImageTk.PhotoImage(img)
-            photo = tk.PhotoImage(file=str(path))
+                    return PILImageTk.PhotoImage(img, master=self)
+            photo = tk.PhotoImage(file=str(path), master=self)
             factor = max(1, photo.width() // px)
             return photo.subsample(factor, factor)
         except Exception:
@@ -1029,32 +1030,6 @@ class StartupManagerGUI(ctk.CTk):
         top.pack(fill='x', padx=14, pady=(8, 4))
         self._hdr_top = top
 
-        title_row = ctk_theme.frame(top, BG)
-        title_row.pack(fill='x', anchor='w')
-        self._logo_photo = self._load_logo(40)
-        if self._logo_photo is not None:
-            tk.Label(title_row, image=self._logo_photo, bg=BG).pack(side='left', padx=(0, 10))
-        title_text = ctk_theme.frame(title_row, BG)
-        title_text.pack(side='left')
-        ctk_theme.label(title_text, brand.APP_DISPLAY, text_color=TEXT,
-                        font_size=20, weight='bold').pack(anchor='w')
-        ctk_theme.label(title_text, brand.APP_MOTTO, text_color=ACCENT,
-                        font_size=11, weight='bold').pack(anchor='w')
-        self._hdr_tagline_lbl = ctk_theme.label(
-            top, brand.APP_TAGLINE, text_color=MUTED, font_size=10, wraplength=720)
-        self._hdr_tagline_lbl.pack(anchor='w', pady=(4, 0))
-
-        more_items = (
-            ('Change theme…', self.cycle_theme),
-            ('Cleanroom Receipt', self.open_last_receipt),
-            ('Proof Pack (HTML)', self.export_audit),
-            ('Custody Check', self.verify_custody),
-            ('Registry Snapshot…', self.open_registry_health),
-            ('Cleanroom Rewind', self.open_time_machine),
-            ('Open Archive Tab', self.open_archive_browser_tab),
-            ('Schedule Cleanup', self.schedule_optimization),
-            ('Telemetry…', self._show_telemetry_dialog),
-        )
         self._command_bar = CommandBar(
             top,
             bg=BG,
@@ -1068,7 +1043,17 @@ class StartupManagerGUI(ctk.CTk):
             on_preview=self.preview_cleanup_receipt,
             on_apply=self.apply_cleanup,
             on_restore=lambda: (self.tab_control.select(5), self.refresh_restore()),
-            more_items=more_items,
+            more_items=(
+                ('Change theme…', self.cycle_theme),
+                ('Cleanroom Receipt', self.open_last_receipt),
+                ('Proof Pack (HTML)', self.export_audit),
+                ('Custody Check', self.verify_custody),
+                ('Registry Snapshot…', self.open_registry_health),
+                ('Cleanroom Rewind', self.open_time_machine),
+                ('Open Archive Tab', self.open_archive_browser_tab),
+                ('Schedule Cleanup', self.schedule_optimization),
+                ('Telemetry…', self._show_telemetry_dialog),
+            ),
         )
         self._hdr_toolbar = self._command_bar.frame
         self.tb_scan = self._command_bar.tb_scan
@@ -1152,23 +1137,20 @@ class StartupManagerGUI(ctk.CTk):
                           f'{PALETTES[nxt]["LABEL"]}), receipts, proof pack, schedule.')
 
     def _build_context_bar(self, parent=None):
-        """Compact one-line hint for the active tab — sidebar handles navigation."""
+        """Compact next-step hint for workspace tabs — brand lives in sidebar."""
         host = parent or self
         bar = ctk_theme.frame(host, SIDEBAR_BG, corner_radius=10)
         bar.pack(fill='x', padx=14, pady=(0, 8))
         self._context_bar = bar
         row = ctk_theme.frame(bar, SIDEBAR_BG)
         row.pack(fill='x', padx=14, pady=8)
-        self.ctx_title_lbl = ctk_theme.label(
-            row, 'Home', text_color=ACCENT, font_size=11, weight='bold')
-        self.ctx_title_lbl.pack(side='left')
-        self.ctx_subtitle_lbl = ctk_theme.label(
-            row, '', text_color=MUTED, font_size=10)
-        self.ctx_subtitle_lbl.pack(side='left', padx=(8, 0))
-        ctk_theme.label(row, '→', text_color=MUTED, font_size=10).pack(side='left', padx=(10, 4))
+        ctk_theme.label(row, 'Next', text_color=MUTED, font_size=9, weight='bold').pack(side='left')
+        ctk_theme.label(row, '→', text_color=MUTED, font_size=10).pack(side='left', padx=(6, 4))
         self.ctx_next_lbl = ctk_theme.label(
             row, '', text_color=TEXT, font_size=10, wraplength=720, justify='left')
         self.ctx_next_lbl.pack(side='left', fill='x', expand=True)
+        self.ctx_title_lbl = None
+        self.ctx_subtitle_lbl = None
         self.ctx_desc_lbl = None
 
     def _update_context_panel(self):
@@ -1226,11 +1208,143 @@ class StartupManagerGUI(ctk.CTk):
             if count:
                 subtitle = f'{count} cleanup candidate(s) awaiting review'
 
-        self.ctx_title_lbl.configure(text=ctx['title'])
-        self.ctx_subtitle_lbl.configure(text=subtitle)
         self.ctx_next_lbl.configure(text=nxt)
         if hasattr(self, '_command_bar'):
             self._command_bar.set_context(tab_idx)
+        self._update_brand_identity(tab_idx)
+
+    def _mark_settings_dirty(self, *_args):
+        self._settings_dirty = True
+        self._update_brand_identity()
+
+    def _compute_brand_state(self, tab_idx=None):
+        """Page-aware title, live status line, and custody pill for the brand block."""
+        if tab_idx is None:
+            try:
+                tab_idx = self.tab_control.index('current')
+            except Exception:
+                tab_idx = 0
+
+        entries = self._load_log_dicts()
+        custody = {'verified': 0, 'total': 0, 'missing': 0, 'bytes_in_custody': 0}
+        if proof_module and entries:
+            try:
+                custody = proof_module.verify_entries(entries)
+            except Exception:
+                pass
+        trust = None
+        if ledger_module and custody.get('total'):
+            trust = ledger_module.trust_score(custody['verified'], custody['total'])
+
+        pill = 'Local-only proof'
+        pill_fg = ACCENT_SOFT
+        pill_text = ACCENT
+        if trust is not None:
+            pill = f'Custody {trust}% verified'
+        if custody.get('missing', 0):
+            pill = f'{custody["missing"]} custody gap(s)'
+            pill_fg = SEVERITY_COLORS.get('high', ACCENT)
+            pill_text = ON_ACCENT
+
+        count = len(getattr(self, 'cleanup_items', []) or [])
+        checked = len(getattr(self, 'cleanup_selected', set()) or set())
+        phase = getattr(self, '_brand_phase', None)
+
+        if tab_idx == 0:
+            title = 'Cleanroom Dashboard'
+            if count and checked:
+                status = 'Receipt ready · archive-first cleanup unlocked'
+            elif count:
+                status = (f'{count:,} candidates found · '
+                          'receipt required before cleanup')
+            elif phase == 'archived':
+                status = 'Cleanup archived · proof saved'
+            elif custody.get('missing', 0):
+                status = 'Custody needs review'
+            elif getattr(self, '_scan_session_done', False):
+                status = 'Scan complete · no candidates pending'
+            else:
+                status = 'Ready to prove your cleanup.'
+        elif tab_idx == 1:
+            title = 'Proof Ledger'
+            act_txt = ''
+            if hasattr(self, 'act_status_lbl'):
+                try:
+                    act_txt = self.act_status_lbl.cget('text') or ''
+                except Exception:
+                    pass
+            if 'Loading' in act_txt:
+                status = 'Loading activity ledger…'
+            elif custody.get('total'):
+                status = f'Every action has a receipt · {custody["total"]:,} logged'
+            else:
+                status = 'Every action has a receipt'
+        elif tab_idx == 2:
+            title = 'Startup Manager'
+            visible = len(self.tree.get_children()) if hasattr(self, 'tree') else 0
+            status = (f'{visible} startup entries loaded'
+                      if visible else 'Programs that launch with Windows')
+        elif tab_idx == 3:
+            title = 'Cleaner'
+            if count:
+                status = f'{count:,} candidates · {checked} checked for archive'
+            else:
+                status = 'Scan folders, then preview receipt before cleanup'
+        elif tab_idx == 4:
+            title = 'Uninstaller'
+            n = len(self.uninstall_tree.get_children()) if hasattr(self, 'uninstall_tree') else 0
+            status = f'{n} installed programs loaded' if n else 'Select a program to review leftovers'
+        elif tab_idx == 5:
+            title = 'Restore'
+            n = len(self.restore_tree.get_children()) if hasattr(self, 'restore_tree') else 0
+            status = f'{n} restorable entries' if n else 'Roll back archived files safely'
+        elif tab_idx == 6:
+            title = 'Archive Custody'
+            stats = getattr(self, '_archive_stats', {}) or {}
+            total = stats.get('total', 0)
+            sel = len(self.archive_tree.selection()) if hasattr(self, 'archive_tree') else 0
+            busy = getattr(self, '_archive_busy', False)
+            if busy:
+                status = 'Loading archive custody…'
+            elif trust is not None and total:
+                status = f'{total:,} archived · {trust}% verified · {sel} selected'
+            elif total:
+                status = f'{total:,} archived · {sel} selected'
+            else:
+                status = 'Browse archived copies before deleting custody'
+        elif tab_idx == 7:
+            title = 'Control Room'
+            if getattr(self, '_settings_dirty', False):
+                status = 'Unsaved changes — Save Settings to apply'
+                pill = 'Unsaved'
+                pill_fg = SEVERITY_COLORS.get('medium', ACCENT_SOFT)
+                pill_text = TEXT
+            else:
+                status = 'Local-only settings and proof rules'
+        else:
+            title = brand.APP_DISPLAY
+            status = 'Ready to prove your cleanup.'
+
+        return {
+            'title': title,
+            'status': status,
+            'pill': pill,
+            'pill_fg': pill_fg,
+            'pill_text': pill_text,
+        }
+
+    def _update_brand_identity(self, tab_idx=None):
+        """Refresh sidebar brand block from current tab and app state."""
+        if not hasattr(self, '_brand_title_lbl'):
+            return
+        state = self._compute_brand_state(tab_idx)
+        try:
+            self._brand_title_lbl.configure(text=state['title'])
+            self._brand_status_lbl.configure(text=state['status'])
+            self._brand_pill_lbl.configure(text=state['pill'], text_color=state['pill_text'])
+            self._brand_pill_frame.configure(fg_color=state['pill_fg'])
+        except Exception:
+            pass
 
     def _navigate_to_tab(self, idx):
         self.tab_control.select(idx)
@@ -1258,9 +1372,23 @@ class StartupManagerGUI(ctk.CTk):
         sidebar.grid_rowconfigure(1, weight=1)
         sidebar.grid_columnconfigure(0, weight=1)
 
-        ctk_theme.label(sidebar, brand.APP_DISPLAY, text_color=TEXT,
-                        font_size=13, weight='bold').grid(
-            row=0, column=0, sticky='ew', padx=12, pady=(14, 8))
+        self._sidebar_logo = self._load_logo(32)
+        identity = brand_identity_block(
+            sidebar,
+            bg=SIDEBAR_BG,
+            accent=ACCENT,
+            accent_soft=ACCENT_SOFT,
+            text_color=TEXT,
+            muted=MUTED,
+            logo_photo=self._sidebar_logo,
+            default_title=brand.APP_DISPLAY,
+            default_status='Ready to prove your cleanup.',
+        )
+        identity['frame'].grid(row=0, column=0, sticky='ew', padx=4, pady=(4, 0))
+        self._brand_title_lbl = identity['title_lbl']
+        self._brand_status_lbl = identity['status_lbl']
+        self._brand_pill_lbl = identity['pill_lbl']
+        self._brand_pill_frame = identity['pill_frame']
 
         nav_scroll = ctk.CTkScrollableFrame(
             sidebar, fg_color=SIDEBAR_BG, corner_radius=0, width=194,
@@ -1383,21 +1511,23 @@ class StartupManagerGUI(ctk.CTk):
                     self._hdr_summary.pack(fill='x', pady=(10, 0))
                 if hasattr(self, '_hdr_compact'):
                     self._hdr_compact.pack_forget()
-                if hasattr(self, '_hdr_tagline_lbl'):
-                    self._hdr_tagline_lbl.pack(anchor='w', pady=(4, 0))
+                if hasattr(self, '_archive_banner'):
+                    self._archive_banner.pack(fill='x', pady=(8, 0))
             else:
                 if hasattr(self, '_hdr_summary'):
                     self._hdr_summary.pack_forget()
                 if hasattr(self, '_hdr_compact'):
                     self._hdr_compact.pack(fill='x', pady=(6, 0))
-                if hasattr(self, '_hdr_tagline_lbl'):
-                    self._hdr_tagline_lbl.pack_forget()
                 if hasattr(self, '_archive_banner'):
                     self._archive_banner.pack_forget()
             if hasattr(self, '_context_bar'):
-                self._context_bar.pack(fill='x', padx=14, pady=(0, 8))
+                if dashboard:
+                    self._context_bar.pack_forget()
+                else:
+                    self._context_bar.pack(fill='x', padx=14, pady=(0, 8))
         except Exception:
             pass
+        self._update_brand_identity(tab_idx)
         if hasattr(self, '_update_responsive_layout'):
             self._update_responsive_layout()
 
@@ -1409,12 +1539,10 @@ class StartupManagerGUI(ctk.CTk):
         hero.grid(row=0, column=0, sticky='ew', padx=10, pady=(8, 6))
         hero_inner = ttk.Frame(hero, style='Card.TFrame')
         hero_inner.pack(fill='x', padx=16, pady=14)
-        ttk.Label(hero_inner, text='Home', font=('Segoe UI', 11),
-                  background=CARD_BG, foreground=MUTED).pack(anchor='w')
         self.dashboard_status_lbl = tk.Label(
             hero_inner, text='Ready to scan', bg=CARD_BG, fg=ACCENT,
             font=('Segoe UI', 22, 'bold'))
-        self.dashboard_status_lbl.pack(anchor='w', pady=(4, 2))
+        self.dashboard_status_lbl.pack(anchor='w', pady=(0, 2))
         self.dashboard_msg_lbl = ttk.Label(
             hero_inner,
             text='Scan configured folders to find cleanup candidates.',
@@ -1577,7 +1705,7 @@ class StartupManagerGUI(ctk.CTk):
         """Proof ledger — every action Cleanroom ever took, with custody status."""
         head = ttk.Frame(self.activity_tab, style='Content.TFrame')
         head.pack(fill='x', padx=10, pady=(10, 4))
-        ttk.Label(head, text='Cleanroom Activity Ledger', font=('Segoe UI', 13, 'bold'),
+        ttk.Label(head, text='Proof Ledger', font=('Segoe UI', 13, 'bold'),
                   background=BG).pack(side='left')
         self.act_status_lbl = ttk.Label(head, text='', style='Badge.TLabel')
         self.act_status_lbl.pack(side='left', padx=(10, 0))
@@ -1981,6 +2109,44 @@ class StartupManagerGUI(ctk.CTk):
             else:
                 self._hdr_compact_trust.configure(text='Custody trust —')
                 self._hdr_compact_detail.configure(text='No archive custody yet')
+        self._update_brand_identity()
+
+    def _bind_settings_dirty_tracking(self):
+        """Mark settings form dirty when the user edits values."""
+        for var in (
+            getattr(self, 'set_scan_on_startup', None),
+            getattr(self, 'set_remember_geometry', None),
+            getattr(self, 'set_remember_last_tab', None),
+            getattr(self, 'set_power_var', None),
+            getattr(self, 'set_scan_downloads', None),
+            getattr(self, 'set_scan_temp', None),
+            getattr(self, 'set_relaxed_scan', None),
+            getattr(self, 'set_dedupe_default', None),
+            getattr(self, 'set_temp_age', None),
+            getattr(self, 'set_installer_age', None),
+            getattr(self, 'set_size_mb', None),
+            getattr(self, 'set_confirm_gb', None),
+            getattr(self, 'set_prune_recent_days', None),
+        ):
+            if var is not None:
+                try:
+                    var.trace_add('write', self._mark_settings_dirty)
+                except Exception:
+                    pass
+        for var_name in ('set_archive_var', 'set_ext_var', 'set_theme_var', 'set_default_tab_var'):
+            var = getattr(self, var_name, None)
+            if var is not None:
+                try:
+                    var.trace_add('write', self._mark_settings_dirty)
+                except Exception:
+                    pass
+        for widget in (getattr(self, 'set_exclude_text', None),
+                       getattr(self, 'set_whitelist_text', None)):
+            if widget is not None:
+                widget.bind('<KeyRelease>', self._mark_settings_dirty)
+        paths = getattr(self, 'set_paths_list', None)
+        if paths is not None:
+            paths.bind('<<ListboxSelect>>', self._mark_settings_dirty)
 
     def _menu_entry_state(self, menu, index, enabled: bool):
         """Enable/disable a menu row without touching separators (avoids TclError)."""
@@ -2539,20 +2705,11 @@ class StartupManagerGUI(ctk.CTk):
         self._add_tooltip(self.open_archived_btn, 'Open the archived copy with its default application.')
 
     def _build_settings_tab(self):
-        self.settings_tab.grid_rowconfigure(1, weight=1)
+        self.settings_tab.grid_rowconfigure(0, weight=1)
         self.settings_tab.grid_columnconfigure(0, weight=1)
 
-        header = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        header.grid(row=0, column=0, sticky='ew', padx=12, pady=(10, 4))
-        ttk.Label(header, text='Settings', style='Header.TLabel').pack(anchor='w')
-        ttk.Label(
-            header,
-            text='Configure scan paths, archive custody, Explorer integration, and local-only proof.',
-            style='SubHeader.TLabel', wraplength=720,
-        ).pack(anchor='w', pady=(4, 0))
-
         body = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        body.grid(row=1, column=0, sticky='nsew', padx=10, pady=(0, 4))
+        body.grid(row=0, column=0, sticky='nsew', padx=10, pady=(10, 4))
         body.grid_rowconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=1)
 
@@ -2904,7 +3061,7 @@ class StartupManagerGUI(ctk.CTk):
 
         # Footer — persistent save/discard only (section nav is left sidebar)
         footer = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        footer.grid(row=2, column=0, sticky='ew', padx=10, pady=10)
+        footer.grid(row=1, column=0, sticky='ew', padx=10, pady=10)
         self.save_settings_btn = ttk.Button(footer, text='Save Settings', style='Primary.TButton',
                                             command=self.save_settings)
         self.save_settings_btn.pack(side='left')
@@ -2917,6 +3074,7 @@ class StartupManagerGUI(ctk.CTk):
         self._add_tooltip(self.save_settings_btn, 'Write these values to the active cleanup config.')
 
         self.load_settings_form()
+        self._bind_settings_dirty_tracking()
 
     def _settings_relaxed_toggle(self):
         if self.set_relaxed_scan.get():
@@ -2950,17 +3108,21 @@ class StartupManagerGUI(ctk.CTk):
         folder = filedialog.askdirectory(parent=self)
         if folder:
             self.set_paths_list.insert('end', str(Path(folder)))
+            self._mark_settings_dirty()
 
     def _settings_remove_path(self):
         for idx in reversed(self.set_paths_list.curselection()):
             self.set_paths_list.delete(idx)
+        self._mark_settings_dirty()
 
     def _settings_browse_archive(self):
         folder = filedialog.askdirectory(parent=self)
         if folder:
             self.set_archive_var.set(str(Path(folder)))
+            self._mark_settings_dirty()
 
     def load_settings_form(self):
+        self._settings_dirty = False
         try:
             cfg = cleanup_main.load_config(self.cleanup_config_path) if cleanup_main else {}
         except Exception:
@@ -3013,6 +3175,7 @@ class StartupManagerGUI(ctk.CTk):
         if hasattr(self, '_settings_config_path_lbl'):
             self._settings_config_path_lbl.configure(text=f'Active config: {self._config_status_label()}')
         self.settings_status_lbl.config(text=self._config_status_label())
+        self._update_brand_identity()
 
     def _settings_open_config(self):
         path = Path(self.cleanup_config_path)
@@ -3076,7 +3239,9 @@ class StartupManagerGUI(ctk.CTk):
         except Exception as e:
             messagebox.showerror('Settings', f'Unable to save settings:\n{e}')
             return
+        self._settings_dirty = False
         self.settings_status_lbl.config(text='Settings saved')
+        self._update_brand_identity()
         self._set_status('Settings saved. Click Scan to apply new paths.')
         theme_changed = new_theme != old_theme
         power_changed = bool(self.set_power_var.get()) != bool(self.power_user)
@@ -4064,6 +4229,7 @@ class StartupManagerGUI(ctk.CTk):
         self.after(0, pump)
 
     def _set_archive_busy(self, busy: bool, message: str = ''):
+        self._archive_busy = busy
         state = 'disabled' if busy else 'normal'
         for attr in ('delete_archive_btn',):
             btn = getattr(self, attr, None)
@@ -4074,6 +4240,7 @@ class StartupManagerGUI(ctk.CTk):
                     pass
         if hasattr(self, 'archive_status_lbl') and message:
             self.archive_status_lbl.config(text=message)
+        self._update_brand_identity()
 
     def _show_delete_archive_confirm(self, recs, *, title='Delete from Archive', on_confirm):
         """Summary-only delete confirmation — never dump thousands of paths in a native dialog."""
@@ -4346,6 +4513,7 @@ class StartupManagerGUI(ctk.CTk):
 
         self.scan_btn.config(state='disabled')
         self.tb_scan.configure(state='disabled')
+        self._brand_phase = None
         if hasattr(self, 'dashboard_primary_btn'):
             self.dashboard_primary_btn.config(state='disabled')
         self.cleanup_status_lbl.config(text='Scanning...')
@@ -4542,6 +4710,8 @@ class StartupManagerGUI(ctk.CTk):
                     )
             else:
                 messagebox.showinfo('Cleanup', f'Finished cleanup: {len(log)} items archived.{extra}')
+            self._brand_phase = 'archived'
+            self._update_brand_identity()
             self.refresh_cleanup()
             self.refresh_restore()
             self.refresh_activity()
@@ -4627,6 +4797,7 @@ class StartupManagerGUI(ctk.CTk):
                 self.act_status_lbl.config(
                     text=f'Custody trust {trust}%' if custody['total'] else 'Awaiting first action')
                 self._on_activity_select()
+                self._update_brand_identity()
 
             self._chunked_tree_populate(
                 self.activity_tree,
@@ -6504,6 +6675,7 @@ class StartupManagerGUI(ctk.CTk):
         if hasattr(self, 'dashboard_status_lbl'):
             self.dashboard_status_lbl.config(text=status_text, fg=status_tone)
         self.preview_receipt_btn = self.dashboard_primary_btn
+        self._update_brand_identity()
 
     def _update_recent_proof(self):
         if not hasattr(self, 'recent_receipt_lbl'):
