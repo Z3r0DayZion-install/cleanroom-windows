@@ -365,14 +365,18 @@ def brand_identity_block(
     muted: str,
     logo_photo=None,
     default_title: str = 'Cleanroom',
-    default_status: str = 'Ready to prove your cleanup.',
+    default_tagline: str = 'Archive-first cleanup, with receipts.',
+    default_status: str = '',
+    default_pill: str = 'Receipt-backed',
 ) -> dict:
-    """Product identity strip: logo, dynamic title/status, pill badge, accent line."""
-    wrap = ctk_theme.frame(parent, bg, corner_radius=10)
-    inner = ctk_theme.frame(wrap, bg)
-    inner.pack(fill='x', padx=10, pady=(12, 10))
+    """Product identity strip: logo, wordmark, tagline, live status, pill, proof trail."""
+    wrap = ctk_theme.frame(parent, accent_soft, corner_radius=12, border_width=1)
+    inner = ctk_theme.frame(wrap, bg, corner_radius=11)
+    inner.pack(fill='x', padx=1, pady=1)
+    content = ctk_theme.frame(inner, bg)
+    content.pack(fill='x', padx=10, pady=(12, 10))
 
-    top_row = ctk_theme.frame(inner, bg)
+    top_row = ctk_theme.frame(content, bg)
     top_row.pack(fill='x')
 
     if logo_photo is not None:
@@ -384,29 +388,37 @@ def brand_identity_block(
     text_col.pack(side='left', fill='x', expand=True)
 
     title_lbl = ctk_theme.label(
-        text_col, default_title, text_color=text_color, font_size=14, weight='bold',
+        text_col, default_title, text_color=accent, font_size=17, weight='bold',
     )
     title_lbl.pack(anchor='w')
+    tagline_lbl = ctk_theme.label(
+        text_col, default_tagline, text_color=muted, font_size=9,
+        wraplength=168, justify='left',
+    )
+    tagline_lbl.pack(anchor='w', pady=(2, 0))
     status_lbl = ctk_theme.label(
-        text_col, default_status, text_color=muted, font_size=9,
+        text_col, default_status, text_color=text_color, font_size=9,
         wraplength=168, justify='left',
     )
     status_lbl.pack(anchor='w', pady=(2, 0))
 
-    pill_frame = ctk_theme.frame(inner, accent_soft, corner_radius=10)
-    pill_frame.pack(anchor='w', pady=(8, 0))
+    pill_row = ctk_theme.frame(content, bg)
+    pill_row.pack(fill='x', pady=(8, 0))
+    pill_frame = ctk_theme.frame(pill_row, accent_soft, corner_radius=10)
+    pill_frame.pack(side='left')
     pill_lbl = ctk_theme.label(
-        pill_frame, 'Local-only proof', text_color=accent, font_size=9, weight='bold',
+        pill_frame, default_pill, text_color=accent, font_size=9, weight='bold',
     )
     pill_lbl.pack(padx=8, pady=3)
 
-    accent_line = ctk_theme.frame(inner, accent, corner_radius=1)
+    accent_line = ctk_theme.frame(content, accent, corner_radius=1)
     accent_line.configure(height=2)
     accent_line.pack(fill='x', pady=(10, 0))
 
     return {
         'frame': wrap,
         'title_lbl': title_lbl,
+        'tagline_lbl': tagline_lbl,
         'status_lbl': status_lbl,
         'pill_lbl': pill_lbl,
         'pill_frame': pill_frame,

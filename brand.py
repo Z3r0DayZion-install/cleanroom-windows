@@ -10,6 +10,8 @@ APP_DISPLAY = 'Cleanroom'
 APP_TAGLINE = ('A Windows cleaner that archives first, proves every action, '
                'and lets you roll back.')
 APP_MOTTO = 'Clean safely. Prove everything. Undo anytime.'
+APP_LOCKUP_TAGLINE = 'Archive-first cleanup, with receipts.'
+APP_LOCKUP_PILL = 'Receipt-backed'
 REPO_NAME = 'cleanroom-windows'
 DATA_DIR_NAME = 'Cleanroom'
 LEGACY_DATA_DIR_NAME = 'SmartClean'  # Smart Clean → Cleanroom upgrade path

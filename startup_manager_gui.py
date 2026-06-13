@@ -1259,7 +1259,7 @@ class StartupManagerGUI(ctk.CTk):
         if ledger_module and custody.get('total'):
             trust = ledger_module.trust_score(custody['verified'], custody['total'])
 
-        pill = 'Local-only proof'
+        pill = brand.APP_LOCKUP_PILL
         pill_fg = ACCENT_SOFT
         pill_text = ACCENT
         if trust is not None:
@@ -1269,12 +1269,17 @@ class StartupManagerGUI(ctk.CTk):
             pill_fg = SEVERITY_COLORS.get('high', ACCENT)
             pill_text = ON_ACCENT
 
+        show_tagline = False
+        title_accent = False
+
         count = len(getattr(self, 'cleanup_items', []) or [])
         checked = len(getattr(self, 'cleanup_selected', set()) or set())
         phase = getattr(self, '_brand_phase', None)
 
         if tab_idx == 0:
-            title = 'Cleanroom Dashboard'
+            title = brand.APP_DISPLAY
+            show_tagline = True
+            title_accent = True
             if count and checked:
                 status = 'Receipt ready · archive-first cleanup unlocked'
             elif count:
@@ -1287,7 +1292,7 @@ class StartupManagerGUI(ctk.CTk):
             elif getattr(self, '_scan_session_done', False):
                 status = 'Scan complete · no candidates pending'
             else:
-                status = 'Ready to prove your cleanup.'
+                status = ''
         elif tab_idx == 1:
             title = 'Proof Ledger'
             act_txt = ''
@@ -1346,11 +1351,14 @@ class StartupManagerGUI(ctk.CTk):
                 status = 'Local-only settings and proof rules'
         else:
             title = brand.APP_DISPLAY
-            status = 'Ready to prove your cleanup.'
+            status = ''
 
         return {
             'title': title,
             'status': status,
+            'tagline': brand.APP_LOCKUP_TAGLINE if show_tagline else '',
+            'show_tagline': show_tagline,
+            'title_accent': title_accent,
             'pill': pill,
             'pill_fg': pill_fg,
             'pill_text': pill_text,
@@ -1362,8 +1370,23 @@ class StartupManagerGUI(ctk.CTk):
             return
         state = self._compute_brand_state(tab_idx)
         try:
-            self._brand_title_lbl.configure(text=state['title'])
-            self._brand_status_lbl.configure(text=state['status'])
+            self._brand_title_lbl.configure(
+                text=state['title'],
+                text_color=ACCENT if state.get('title_accent') else TEXT,
+                font=ctk_theme.font(17, 'bold'),
+            )
+            if hasattr(self, '_brand_tagline_lbl'):
+                if state.get('show_tagline'):
+                    self._brand_tagline_lbl.configure(text=state['tagline'])
+                    self._brand_tagline_lbl.pack(anchor='w', pady=(2, 0))
+                else:
+                    self._brand_tagline_lbl.pack_forget()
+            if state.get('status'):
+                self._brand_status_lbl.configure(text=state['status'])
+                self._brand_status_lbl.pack(anchor='w', pady=(2, 0))
+            else:
+                self._brand_status_lbl.configure(text='')
+                self._brand_status_lbl.pack_forget()
             self._brand_pill_lbl.configure(text=state['pill'], text_color=state['pill_text'])
             self._brand_pill_frame.configure(fg_color=state['pill_fg'])
         except Exception:
@@ -1405,10 +1428,12 @@ class StartupManagerGUI(ctk.CTk):
             muted=MUTED,
             logo_photo=self._sidebar_logo,
             default_title=brand.APP_DISPLAY,
-            default_status='Ready to prove your cleanup.',
+            default_tagline=brand.APP_LOCKUP_TAGLINE,
+            default_pill=brand.APP_LOCKUP_PILL,
         )
         identity['frame'].grid(row=0, column=0, sticky='ew', padx=4, pady=(4, 0))
         self._brand_title_lbl = identity['title_lbl']
+        self._brand_tagline_lbl = identity['tagline_lbl']
         self._brand_status_lbl = identity['status_lbl']
         self._brand_pill_lbl = identity['pill_lbl']
         self._brand_pill_frame = identity['pill_frame']
