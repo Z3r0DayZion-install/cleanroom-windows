@@ -494,7 +494,7 @@ class StartupManagerGUI(ctk.CTk):
         if w < 200:
             return
         wrap = max(420, w - 300)
-        if hasattr(self, 'ctx_desc_lbl'):
+        if hasattr(self, 'ctx_desc_lbl') and self.ctx_desc_lbl is not None:
             self.ctx_desc_lbl.configure(wraplength=wrap)
         if hasattr(self, 'ctx_next_lbl'):
             self.ctx_next_lbl.configure(wraplength=max(320, w - 380))
@@ -648,24 +648,24 @@ class StartupManagerGUI(ctk.CTk):
                     foreground=badge_fg, padding=(8, 4))
         s.configure('Status.TLabel', font=('Segoe UI', 9), background=STATUS_BG, foreground=TEXT, padding=(8, 4))
         s.configure('TNotebook', background=BG, borderwidth=0)
+        s.configure('TCheckbutton', background=BG, foreground=TEXT)
+        s.map('TCheckbutton', background=[('active', BG)])
+        self._hide_notebook_tabs()
+
+    def _hide_notebook_tabs(self):
+        """Sidebar is primary nav — remove duplicate notebook tab strip."""
         try:
+            s = self.style
+            s.layout('TNotebook.Tab', [])
             s.layout('TNotebook', [('Notebook.client', {'sticky': 'nswe'})])
         except Exception:
             pass
-        s.configure('TNotebook.Tab', font=('Segoe UI', 10), padding=(14, 7),
-                    background=SIDEBAR_BG, foreground=MUTED)
-        s.map('TNotebook.Tab',
-              background=[('selected', CARD_BG)],
-              foreground=[('selected', ACCENT)])
-        s.configure('TCheckbutton', background=BG, foreground=TEXT)
-        s.map('TCheckbutton', background=[('active', BG)])
 
     # ------------------------------------------------------------------
     # Widget construction
     # ------------------------------------------------------------------
     def create_widgets(self):
         self._build_header()
-        self._build_proof_flow_bar()
         self._build_context_bar()
         main = ttk.Frame(self)
         main.pack(fill='both', expand=True, padx=10, pady=(0, 0))
@@ -702,6 +702,7 @@ class StartupManagerGUI(ctk.CTk):
         self._build_archive_tab()
         self._build_settings_tab()
         self._build_statusbar()
+        self._hide_notebook_tabs()
         self.tab_control.bind('<<NotebookTabChanged>>', self._sync_nav_buttons)
         self._sync_nav_buttons()
         self._update_context_panel()
@@ -765,7 +766,7 @@ class StartupManagerGUI(ctk.CTk):
 
         title_row = ctk_theme.frame(title_container, BG)
         title_row.pack(anchor='w')
-        self._logo_photo = self._load_logo(72)
+        self._logo_photo = self._load_logo(48)
         if self._logo_photo is not None:
             tk.Label(title_row, image=self._logo_photo, bg=BG).pack(side='left', padx=(0, 14))
         title_text = ctk_theme.frame(title_row, BG)
@@ -843,36 +844,23 @@ class StartupManagerGUI(ctk.CTk):
                           f"Theme: {PALETTES[CURRENT_THEME]['LABEL']} — click for "
                           f"{PALETTES[nxt]['LABEL']}. All themes are in Settings.")
 
-    def _build_proof_flow_bar(self):
-        bar = ctk_theme.frame(self, CARD_BG, corner_radius=8)
-        bar.pack(fill='x', padx=12, pady=(0, 8))
-        ctk_theme.label(
-            bar, ctk_theme.PROOF_FLOW_TEXT, text_color=ACCENT,
-            font_size=12, weight='bold',
-        ).pack(padx=14, pady=8)
-
     def _build_context_bar(self):
-        """Live context for the active tab / submenu — updates on navigation."""
+        """Compact one-line hint for the active tab — sidebar handles navigation."""
         bar = ctk_theme.frame(self, SIDEBAR_BG, corner_radius=8)
-        bar.pack(fill='x', padx=12, pady=(0, 8))
-        top = ctk_theme.frame(bar, SIDEBAR_BG)
-        top.pack(fill='x', padx=12, pady=(10, 2))
+        bar.pack(fill='x', padx=12, pady=(0, 6))
+        row = ctk_theme.frame(bar, SIDEBAR_BG)
+        row.pack(fill='x', padx=12, pady=6)
         self.ctx_title_lbl = ctk_theme.label(
-            top, 'Review', text_color=ACCENT, font_size=12, weight='bold')
+            row, 'Review', text_color=ACCENT, font_size=11, weight='bold')
         self.ctx_title_lbl.pack(side='left')
         self.ctx_subtitle_lbl = ctk_theme.label(
-            top, '', text_color=MUTED, font_size=10)
-        self.ctx_subtitle_lbl.pack(side='left', padx=(10, 0))
-        self.ctx_desc_lbl = ctk_theme.label(
-            bar, '', text_color=TEXT, font_size=11, wraplength=980, justify='left')
-        self.ctx_desc_lbl.pack(anchor='w', padx=12, pady=(0, 4))
-        next_row = ctk_theme.frame(bar, SIDEBAR_BG)
-        next_row.pack(fill='x', padx=12, pady=(0, 10))
-        ctk_theme.label(next_row, 'Next step', text_color=MUTED, font_size=9, weight='bold').pack(
-            side='left', padx=(0, 6))
+            row, '', text_color=MUTED, font_size=10)
+        self.ctx_subtitle_lbl.pack(side='left', padx=(8, 0))
+        ctk_theme.label(row, '→', text_color=MUTED, font_size=10).pack(side='left', padx=(10, 4))
         self.ctx_next_lbl = ctk_theme.label(
-            next_row, '', text_color=ACCENT, font_size=10, wraplength=900, justify='left')
+            row, '', text_color=TEXT, font_size=10, wraplength=720, justify='left')
         self.ctx_next_lbl.pack(side='left', fill='x', expand=True)
+        self.ctx_desc_lbl = None
 
     def _update_context_panel(self):
         try:
@@ -881,16 +869,14 @@ class StartupManagerGUI(ctk.CTk):
             tab_idx = 0
         ctx = (ctk_theme.TAB_CONTEXT[tab_idx] if tab_idx < len(ctk_theme.TAB_CONTEXT)
                else ctk_theme.TAB_CONTEXT[0])
-        subtitle = ''
-        desc = ctx['description']
+        subtitle = ctx['description']
         nxt = ctx['next']
 
         if tab_idx == 2:
             cat = getattr(self, 'current_category', 'All')
             sub = ctk_theme.STARTUP_FILTER_CONTEXT.get(cat)
             if sub:
-                subtitle = f'· {sub[0]}'
-                desc = sub[1]
+                subtitle = sub[1]
                 nxt = sub[2]
             visible = len(self.tree.get_children()) if hasattr(self, 'tree') else 0
             subtitle = f'{subtitle} · {visible} shown' if subtitle else f'{visible} items shown'
@@ -902,7 +888,7 @@ class StartupManagerGUI(ctk.CTk):
         elif tab_idx == 3:
             count = len(getattr(self, 'cleanup_items', []) or [])
             checked = len(getattr(self, 'cleanup_selected', set()) or [])
-            subtitle = f'· {count} candidates · {checked} checked'
+            subtitle = f'{count} candidates · {checked} checked'
             if count == 0:
                 nxt = 'No candidates yet — try Settings → Relaxed scan, then Scan Now.'
             else:
@@ -911,14 +897,14 @@ class StartupManagerGUI(ctk.CTk):
             entry = self._selected_program() if hasattr(self, 'uninstall_tree') else None
             if entry and program_advice:
                 advice = program_advice.analyze_program(entry)
-                subtitle = f'· {advice["category"].replace("_", " ")}'
+                subtitle = advice['category'].replace('_', ' ')
                 nxt = advice['need']
             else:
                 nxt = 'Select a program — read the summary panel, then Uninstall or Force Remove.'
         elif tab_idx == 6:
             stats = getattr(self, '_archive_stats', {}) or {}
-            subtitle = (f'· {stats.get("total", 0)} in custody · '
-                        f'{stats.get("safe_count", 0)} safe to delete')
+            subtitle = (f'{stats.get("total", 0)} in custody · '
+                          f'{stats.get("safe_count", 0)} safe to delete')
             if stats.get('safe_count', 0):
                 nxt = (f'{stats["safe_count"]} item(s) marked Safe to delete — '
                        'review the list, then Delete from Archive.')
@@ -927,11 +913,10 @@ class StartupManagerGUI(ctk.CTk):
         elif tab_idx == 0:
             count = len(getattr(self, 'cleanup_items', []) or [])
             if count:
-                subtitle = f'· {count} cleanup candidate(s) awaiting review'
+                subtitle = f'{count} cleanup candidate(s) awaiting review'
 
         self.ctx_title_lbl.configure(text=ctx['title'])
         self.ctx_subtitle_lbl.configure(text=subtitle)
-        self.ctx_desc_lbl.configure(text=desc)
         self.ctx_next_lbl.configure(text=nxt)
 
     def _navigate_to_tab(self, idx):
