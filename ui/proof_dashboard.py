@@ -313,57 +313,62 @@ def collapsible_section(
     sidebar_bg: str,
     muted: str,
     text_color: str,
+    accent_soft: str = '',
     start_open: bool = True,
 ) -> tuple[ctk.CTkButton, ctk.CTkFrame]:
     """Collapsible sidebar group; returns (toggle_button, body_frame)."""
+    accent_soft = accent_soft or sidebar_bg
     block = ctk_theme.frame(parent, sidebar_bg)
-    block.pack(fill='x', padx=2, pady=(0, 4))
+    block.pack(fill='x', padx=2, pady=(0, 6))
     state = {'open': start_open}
 
-    header = ctk_theme.frame(block, sidebar_bg)
-    header.pack(fill='x')
+    header = ctk_theme.frame(block, accent_soft if start_open else sidebar_bg, corner_radius=8)
+    header.pack(fill='x', padx=2, pady=(0, 2))
     body = ctk_theme.frame(block, sidebar_bg)
     if start_open:
         body.pack(fill='x', padx=4, pady=(2, 0))
 
+    chevron = '▾' if start_open else '▸'
     toggle = ctk_theme.button(
         header,
-        f'{"▾" if start_open else "▸"} {title}',
+        f'{chevron}  {title}',
         lambda: None,
         fg_color='transparent',
-        hover_color=sidebar_bg,
-        text_color=muted,
+        hover_color=accent_soft,
+        text_color=text_color,
         anchor='w',
-        height=22,
+        height=30,
+        font=ctk_theme.font(10, 'bold'),
     )
-    toggle.pack(fill='x', padx=6)
+    toggle.pack(fill='x', padx=8, pady=4)
 
     def _flip():
         state['open'] = not state['open']
         if state['open']:
             body.pack(fill='x', padx=4, pady=(2, 0))
-            toggle.configure(text=f'▾ {title}')
+            header.configure(fg_color=accent_soft)
+            toggle.configure(text=f'▾  {title}')
         else:
             body.pack_forget()
-            toggle.configure(text=f'▸ {title}')
+            header.configure(fg_color=sidebar_bg)
+            toggle.configure(text=f'▸  {title}')
 
     toggle.configure(command=_flip)
     return toggle, body
 
 
-def quick_nav_chip(
+def sidebar_nav_button(
     parent,
     label: str,
     command,
     *,
     sidebar_bg: str,
     accent_soft: str,
-    accent: str,
     text_color: str,
 ) -> ctk.CTkButton:
-    """Compact sidebar quick-nav chip."""
+    """Full-width sidebar navigation row."""
     return ctk_theme.button(
         parent, label, command,
-        fg_color=accent_soft, hover_color=accent, text_color=text_color,
-        height=28, corner_radius=8,
+        fg_color='transparent', hover_color=accent_soft, text_color=text_color,
+        anchor='w', height=32, corner_radius=8,
     )

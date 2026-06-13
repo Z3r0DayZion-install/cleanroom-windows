@@ -303,7 +303,7 @@ def test_disabled_category_lists_backups_and_offers_reenable(sandbox):
     assert app.enable_btn.cget('text') == 'Re-enable Selected'
     assert str(app.enable_btn.cget('state')) == 'normal'
     assert str(app.disable_btn.cget('state')) == 'disabled'
-    assert 'Disabled: 1' in app.disabled_label.cget('text')
+    assert app.disabled_label.cget('text') == '1'
 
 
 def test_settings_tab_roundtrips_config(sandbox):

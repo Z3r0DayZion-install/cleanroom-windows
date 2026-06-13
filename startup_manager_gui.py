@@ -20,10 +20,10 @@ from ui.proof_dashboard import (
     ProofDrawer,
     collapsible_section,
     proof_card,
-    quick_nav_chip,
     recent_proof_tile,
     settings_card,
     settings_section_nav,
+    sidebar_nav_button,
     trust_card,
 )
 import tkinter as tk
@@ -382,6 +382,8 @@ class StartupManagerGUI(ctk.CTk):
         }
 
     def _save_window_geometry(self, geo: dict):
+        if not load_ui_prefs().get('remember_window_geometry', True):
+            return
         prefs = load_ui_prefs()
         prefs['window_geometry'] = geo
         save_ui_prefs(prefs)
@@ -410,12 +412,31 @@ class StartupManagerGUI(ctk.CTk):
             self.refresh_restore()
         elif tab == 'settings':
             self.tab_control.select(self.settings_tab)
+        elif load_ui_prefs().get('remember_last_tab', True):
+            try:
+                idx = int(load_ui_prefs().get('last_tab', 0))
+                if 0 <= idx < self.tab_control.index('end'):
+                    self.tab_control.select(idx)
+            except Exception:
+                pass
+        else:
+            default_map = {
+                'Home': 0, 'Activity': 1, 'Startup': 2, 'Cleaner': 3,
+                'Archive': 6, 'Settings': 7,
+            }
+            label = load_ui_prefs().get('default_tab', 'Home')
+            idx = default_map.get(label, 0)
+            if 0 <= idx < self.tab_control.index('end'):
+                self.tab_control.select(idx)
 
     def _finish_launch_sequence(self):
         if self._launch_done:
             return
         self._launch_done = True
         prefs = load_ui_prefs()
+        if not prefs.get('remember_window_geometry', True):
+            prefs = dict(prefs)
+            prefs.pop('window_geometry', None)
         apply_window_geometry(self, prefs)
         bind_window_tracking(self, on_save=self._save_window_geometry)
         self.deiconify()
@@ -562,11 +583,6 @@ class StartupManagerGUI(ctk.CTk):
             self.ctx_desc_lbl.configure(wraplength=wrap)
         if hasattr(self, 'ctx_next_lbl'):
             self.ctx_next_lbl.configure(wraplength=max(280, min(720, w - 340)))
-        if hasattr(self, '_ctx_quick_row'):
-            if h < 620 or w < 860:
-                self._ctx_quick_row.pack_forget()
-            else:
-                self._ctx_quick_row.pack(fill='x', padx=14, pady=(0, 8))
         if hasattr(self, 'ctx_subtitle_lbl'):
             if h < 680:
                 self.ctx_subtitle_lbl.pack_forget()
@@ -633,11 +649,12 @@ class StartupManagerGUI(ctk.CTk):
         if hasattr(self, '_command_bar'):
             self._command_bar.set_compact_labels(w < 1000)
         if hasattr(self, '_body_grid') and hasattr(self, '_body_center'):
-            if w > MAX_SIZE[0] + 48:
-                gutter = max(0, (w - MAX_SIZE[0]) // 2)
+            content_max = min(MAX_SIZE[0], 1020)
+            if w > content_max + 48:
+                gutter = max(0, (w - content_max) // 2)
                 self._body_center.grid(row=0, column=1, columnspan=1, sticky='nsew', padx=0)
                 self._body_grid.grid_columnconfigure(0, weight=1, minsize=gutter)
-                self._body_grid.grid_columnconfigure(1, weight=0, minsize=min(MAX_SIZE[0], w - 2 * gutter))
+                self._body_grid.grid_columnconfigure(1, weight=0, minsize=min(content_max, w - 2 * gutter))
                 self._body_grid.grid_columnconfigure(2, weight=1, minsize=gutter)
             else:
                 self._body_center.grid(row=0, column=0, columnspan=3, sticky='nsew')
@@ -656,6 +673,8 @@ class StartupManagerGUI(ctk.CTk):
             self._layout_restore_split(w)
         if hasattr(self, '_layout_archive_split'):
             self._layout_archive_split(w)
+        if hasattr(self, '_layout_startup_split'):
+            self._layout_startup_split(w)
         if hasattr(self, '_uninst_quiet_cb'):
             compact_uninst = w < 980
             if compact_uninst:
@@ -697,11 +716,11 @@ class StartupManagerGUI(ctk.CTk):
                 self._activity_bar.pack_forget()
             else:
                 self._activity_bar.pack(fill='x', padx=10, pady=(0, 6))
-        if hasattr(self, '_startup_detail_frame'):
-            if h < 620:
-                self._startup_detail_frame.grid_remove()
+        if hasattr(self, '_startup_detail_panel'):
+            if h < 580:
+                self._startup_detail_panel.grid_remove()
             else:
-                self._startup_detail_frame.grid(row=1, column=0, sticky='ew', pady=(8, 0))
+                self._layout_startup_split(w)
         wrap = max(420, w - 340)
         for attr in ('uninst_detail_what', 'uninst_detail_does',
                      'uninst_detail_need', 'uninst_detail_uninst'):
@@ -733,6 +752,36 @@ class StartupManagerGUI(ctk.CTk):
             left.pack(side='left', fill='both', expand=True)
             right.pack(side='left', fill='y', padx=(8, 0))
             right.pack_propagate(False)
+
+    def _layout_startup_split(self, window_width):
+        if not hasattr(self, '_startup_container'):
+            return
+        try:
+            content_w = self.tab_control.winfo_width()
+        except Exception:
+            content_w = max(window_width - 260, 640)
+        mode = 'stacked' if content_w < 980 else 'wide'
+        detail_w = max(260, min(340, int(content_w * 0.34)))
+        if hasattr(self, '_startup_detail_panel'):
+            self._startup_detail_panel.configure(width=detail_w)
+        if hasattr(self, 'detail_command_text'):
+            self.detail_command_text.configure(width=max(24, detail_w // 8))
+        for attr in ('detail_name', 'detail_source', 'detail_location', 'detail_hint'):
+            if hasattr(self, attr):
+                getattr(self, attr).configure(wraplength=max(180, detail_w - 24))
+        if mode == getattr(self, '_startup_split_mode', None):
+            return
+        self._startup_split_mode = mode
+        tree_card = self._startup_tree_card
+        detail = self._startup_detail_panel
+        tree_card.grid_forget()
+        detail.grid_forget()
+        if mode == 'stacked':
+            tree_card.grid(row=0, column=0, sticky='nsew')
+            detail.grid(row=1, column=0, sticky='ew', pady=(8, 0))
+        else:
+            tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+            detail.grid(row=0, column=1, sticky='ns')
 
     def _layout_archive_split(self, window_width):
         if not hasattr(self, '_archive_body'):
@@ -1054,6 +1103,7 @@ class StartupManagerGUI(ctk.CTk):
         host = parent or self
         bar = ctk_theme.frame(host, SIDEBAR_BG, corner_radius=10)
         bar.pack(fill='x', padx=14, pady=(0, 8))
+        self._context_bar = bar
         row = ctk_theme.frame(bar, SIDEBAR_BG)
         row.pack(fill='x', padx=14, pady=8)
         self.ctx_title_lbl = ctk_theme.label(
@@ -1067,22 +1117,6 @@ class StartupManagerGUI(ctk.CTk):
             row, '', text_color=TEXT, font_size=10, wraplength=720, justify='left')
         self.ctx_next_lbl.pack(side='left', fill='x', expand=True)
         self.ctx_desc_lbl = None
-
-        quick_row = ctk_theme.frame(bar, SIDEBAR_BG)
-        quick_row.pack(fill='x', padx=14, pady=(0, 8))
-        self._ctx_quick_nav = []
-        for label, idx in (
-            ('Home', 0), ('Cleaner', 3), ('Archive', 6), ('Activity', 1),
-            ('Startup', 2), ('Settings', 7),
-        ):
-            btn = quick_nav_chip(
-                quick_row, label, lambda i=idx: self._navigate_to_tab(i),
-                sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT,
-                accent=ACCENT, text_color=TEXT,
-            )
-            btn.pack(side='left', padx=(0, 6))
-            self._ctx_quick_nav.append((idx, btn))
-        self._ctx_quick_row = quick_row
 
     def _update_context_panel(self):
         try:
@@ -1166,36 +1200,19 @@ class StartupManagerGUI(ctk.CTk):
         sidebar.pack(side='left', fill='y', padx=(0, 12), pady=(0, 6))
         sidebar.configure(width=210)
         sidebar.pack_propagate(False)
-        sidebar.grid_rowconfigure(3, weight=1)
+        sidebar.grid_rowconfigure(2, weight=1)
         sidebar.grid_columnconfigure(0, weight=1)
 
         ctk_theme.label(sidebar, brand.APP_DISPLAY, text_color=TEXT,
                         font_size=13, weight='bold').grid(
             row=0, column=0, sticky='ew', padx=12, pady=(14, 8))
 
-        quick = ctk_theme.frame(sidebar, SIDEBAR_BG)
-        quick.grid(row=1, column=0, sticky='ew', padx=8, pady=(0, 4))
-        ctk_theme.label(quick, 'Quick nav', text_color=MUTED, font_size=9, weight='bold').pack(
-            anchor='w', padx=2, pady=(0, 4))
-        quick_grid = ctk_theme.frame(quick, SIDEBAR_BG)
-        quick_grid.pack(fill='x')
-        for col in range(2):
-            quick_grid.grid_columnconfigure(col, weight=1)
-        self._quick_nav_buttons = []
-        for i, (idx, label) in enumerate(((0, 'Home'), (3, 'Cleaner'), (6, 'Archive'), (1, 'Activity'))):
-            btn = quick_nav_chip(
-                quick_grid, label, lambda tab=idx: self._navigate_to_tab(tab),
-                sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT,
-                accent=ACCENT, text_color=TEXT,
-            )
-            btn.grid(row=i // 2, column=i % 2, sticky='ew', padx=2, pady=2)
-            self._quick_nav_buttons.append((idx, btn))
-
-        self._sidebar_explorer_btn = ctk_theme.button(
+        self._sidebar_explorer_btn = sidebar_nav_button(
             sidebar, 'Explorer Context Menus…', self.open_shell_context_menu_tool,
-            fg_color=ACCENT_SOFT, hover_color=ACCENT, text_color=ACCENT,
+            **dict(sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT, text_color=ACCENT),
         )
-        self._sidebar_explorer_btn.grid(row=2, column=0, sticky='ew', padx=8, pady=(0, 4))
+        self._sidebar_explorer_btn.configure(fg_color=ACCENT_SOFT)
+        self._sidebar_explorer_btn.grid(row=1, column=0, sticky='ew', padx=8, pady=(0, 6))
         self._add_tooltip(
             self._sidebar_explorer_btn,
             'Build and install Windows Explorer right-click menus (HKCU, per-user).\n'
@@ -1206,47 +1223,43 @@ class StartupManagerGUI(ctk.CTk):
             sidebar, fg_color=SIDEBAR_BG, corner_radius=0, width=194,
             scrollbar_button_color=BORDER, scrollbar_button_hover_color=ACCENT_SOFT,
         )
-        nav_scroll.grid(row=3, column=0, sticky='nsew', padx=4, pady=(0, 4))
+        nav_scroll.grid(row=2, column=0, sticky='nsew', padx=4, pady=(0, 4))
         self._sidebar_nav_scroll = nav_scroll
         self._nav_buttons = []
+        nav_kw = dict(sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT, text_color=TEXT)
 
         _, main_body = collapsible_section(
-            nav_scroll, 'Main', sidebar_bg=SIDEBAR_BG, muted=MUTED,
-            text_color=TEXT, start_open=False,
+            nav_scroll, 'Main', muted=MUTED, start_open=True, **nav_kw,
         )
         for idx, label, tip in (
-            (0, '🏠  Home', 'Proof home — custody status and next archive-first action.'),
-            (1, '📊  Activity', 'Activity ledger — every archive with timestamps.'),
-            (3, '🧹  Cleaner', 'Scan folders and archive reviewed files to custody.'),
-            (6, '🗂️  Archive', 'Archive custody — browse, delete, reclaim disk space.'),
+            (0, 'Home', 'Proof home — custody status and next archive-first action.'),
+            (1, 'Activity', 'Activity ledger — every archive with timestamps.'),
+            (3, 'Cleaner', 'Scan folders and archive reviewed files to custody.'),
+            (6, 'Archive', 'Archive custody — browse, delete, reclaim disk space.'),
         ):
-            btn = ctk_theme.button(
-                main_body, label, lambda i=idx: self._navigate_to_tab(i),
-                fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
-            btn.pack(fill='x', pady=2, padx=2)
+            btn = sidebar_nav_button(
+                main_body, label, lambda i=idx: self._navigate_to_tab(i), **nav_kw)
+            btn.pack(fill='x', pady=1, padx=2)
             self._nav_buttons.append((idx, btn))
             self._add_tooltip(btn, tip)
 
         _, sys_body = collapsible_section(
-            nav_scroll, 'System', sidebar_bg=SIDEBAR_BG, muted=MUTED,
-            text_color=TEXT, start_open=False,
+            nav_scroll, 'System', muted=MUTED, start_open=True, **nav_kw,
         )
         for idx, label, tip in (
-            (2, '🚀  Startup', 'Startup programs — filter by source, enable or disable.'),
-            (4, '🗑  Uninstaller', 'Uninstall programs and archive leftovers.'),
-            (5, '↩  Restore', 'Restore archived files from the cleanup log.'),
-            (7, '⚙  Settings', 'Scan paths, ages, archive folder, quick toggles.'),
+            (2, 'Startup', 'Startup programs — filter by source, enable or disable.'),
+            (4, 'Uninstaller', 'Uninstall programs and archive leftovers.'),
+            (5, 'Restore', 'Restore archived files from the cleanup log.'),
+            (7, 'Settings', 'Scan paths, ages, archive folder, quick toggles.'),
         ):
-            btn = ctk_theme.button(
-                sys_body, label, lambda i=idx: self._navigate_to_tab(i),
-                fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
-            btn.pack(fill='x', pady=2, padx=2)
+            btn = sidebar_nav_button(
+                sys_body, label, lambda i=idx: self._navigate_to_tab(i), **nav_kw)
+            btn.pack(fill='x', pady=1, padx=2)
             self._nav_buttons.append((idx, btn))
             self._add_tooltip(btn, tip)
 
         _, tools_body = collapsible_section(
-            nav_scroll, 'Tools', sidebar_bg=SIDEBAR_BG, muted=MUTED,
-            text_color=TEXT, start_open=False,
+            nav_scroll, 'Tools', muted=MUTED, start_open=False, **nav_kw,
         )
         tools = [
             ('Registry Snapshot', self.open_registry_health,
@@ -1263,14 +1276,12 @@ class StartupManagerGUI(ctk.CTk):
              'Schedule recurring cleanup via Task Scheduler.'),
         ]
         for label, cmd, tip in tools:
-            btn = ctk_theme.button(
-                tools_body, label, cmd,
-                fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
-            btn.pack(fill='x', pady=2, padx=2)
+            btn = sidebar_nav_button(tools_body, label, cmd, **nav_kw)
+            btn.pack(fill='x', pady=1, padx=2)
             self._add_tooltip(btn, tip)
 
         footer = ctk_theme.frame(sidebar, SIDEBAR_BG)
-        footer.grid(row=4, column=0, sticky='ew', padx=10, pady=(4, 10))
+        footer.grid(row=3, column=0, sticky='ew', padx=10, pady=(4, 10))
         ctk_theme.label(footer, 'F5 refresh · Ctrl+F search · Ctrl+1–8 tabs',
                         text_color=MUTED, font_size=9).pack(anchor='w')
 
@@ -1286,22 +1297,9 @@ class StartupManagerGUI(ctk.CTk):
             else:
                 btn.configure(fg_color='transparent', text_color=TEXT,
                               font=ctk_theme.font(11, 'normal'))
-        if hasattr(self, '_quick_nav_buttons'):
-            for i, btn in self._quick_nav_buttons:
-                if i == current:
-                    btn.configure(fg_color=ACCENT, text_color=ON_ACCENT,
-                                  font=ctk_theme.font(10, 'bold'))
-                else:
-                    btn.configure(fg_color=ACCENT_SOFT, text_color=TEXT,
-                                  font=ctk_theme.font(10, 'normal'))
-        if hasattr(self, '_ctx_quick_nav'):
-            for i, btn in self._ctx_quick_nav:
-                if i == current:
-                    btn.configure(fg_color=ACCENT, text_color=ON_ACCENT,
-                                  font=ctk_theme.font(10, 'bold'))
-                else:
-                    btn.configure(fg_color=ACCENT_SOFT, text_color=TEXT,
-                                  font=ctk_theme.font(10, 'normal'))
+        prefs = load_ui_prefs()
+        prefs['last_tab'] = current
+        save_ui_prefs(prefs)
         self._update_context_panel()
         self._lazy_load_tab(current)
 
@@ -1977,27 +1975,30 @@ class StartupManagerGUI(ctk.CTk):
         head.pack(fill='x', padx=10, pady=(10, 4))
         ttk.Label(head, text='Startup Manager', font=('Segoe UI', 13, 'bold'),
                   background=BG).pack(side='left')
-        self.total_label = ttk.Label(head, text='Total: 0', style='Badge.TLabel')
-        self.folder_label = ttk.Label(head, text='Folders: 0', style='Badge.TLabel')
-        self.registry_label = ttk.Label(head, text='Registry: 0', style='Badge.TLabel')
-        self.tasks_label = ttk.Label(head, text='Tasks: 0', style='Badge.TLabel')
-        self.disabled_label = ttk.Label(head, text='Disabled: 0', style='Badge.TLabel')
-        for lbl in (self.total_label, self.folder_label, self.registry_label,
-                    self.tasks_label, self.disabled_label):
-            lbl.pack(side='left', padx=(6, 0))
+        self.status_lbl = ttk.Label(head, text='', style='Info.TLabel')
+        self.status_lbl.pack(side='right')
 
-        # Category chips + search (used to live in the global sidebar/header)
+        stats_row = ttk.Frame(self.startup_tab, style='Content.TFrame')
+        stats_row.pack(fill='x', padx=10, pady=(0, 8))
+        for col in range(5):
+            stats_row.grid_columnconfigure(col, weight=1)
+        self.total_label = self._stat_card_compact(stats_row, 0, 'Total')
+        self.folder_label = self._stat_card_compact(stats_row, 1, 'Folders')
+        self.registry_label = self._stat_card_compact(stats_row, 2, 'Registry')
+        self.tasks_label = self._stat_card_compact(stats_row, 3, 'Tasks')
+        self.disabled_label = self._stat_card_compact(stats_row, 4, 'Disabled')
+
         chips = ttk.Frame(self.startup_tab, style='Content.TFrame')
         chips.pack(fill='x', padx=10, pady=(0, 6))
-        self.cat_all = ttk.Button(chips, text='▦ All', style='Sidebar.TButton',
+        self.cat_all = ttk.Button(chips, text='All', style='Sidebar.TButton',
                                   command=lambda: self._set_category('All'))
-        self.cat_folders = ttk.Button(chips, text='📁 Startup Folders', style='Sidebar.TButton',
+        self.cat_folders = ttk.Button(chips, text='Folders', style='Sidebar.TButton',
                                       command=lambda: self._set_category('Folders'))
-        self.cat_registry = ttk.Button(chips, text='🗝 Registry Run', style='Sidebar.TButton',
+        self.cat_registry = ttk.Button(chips, text='Registry', style='Sidebar.TButton',
                                        command=lambda: self._set_category('Registry'))
-        self.cat_tasks = ttk.Button(chips, text='⏱ Scheduled Tasks', style='Sidebar.TButton',
+        self.cat_tasks = ttk.Button(chips, text='Tasks', style='Sidebar.TButton',
                                     command=lambda: self._set_category('Tasks'))
-        self.cat_disabled = ttk.Button(chips, text='⏸ Disabled', style='Sidebar.TButton',
+        self.cat_disabled = ttk.Button(chips, text='Disabled', style='Sidebar.TButton',
                                        command=lambda: self._set_category('Disabled'))
         for btn in (self.cat_all, self.cat_folders, self.cat_registry,
                     self.cat_tasks, self.cat_disabled):
@@ -2010,7 +2011,7 @@ class StartupManagerGUI(ctk.CTk):
         self._refresh_category_buttons()
 
         self.search_var = tk.StringVar()
-        search = ttk.Entry(chips, textvariable=self.search_var, width=30, style='Search.TEntry')
+        search = ttk.Entry(chips, textvariable=self.search_var, width=28, style='Search.TEntry')
         search.pack(side='right')
         search.insert(0, SEARCH_PLACEHOLDER)
         search.config(foreground=PLACEHOLDER)
@@ -2023,26 +2024,28 @@ class StartupManagerGUI(ctk.CTk):
 
         startup_actions = ttk.Frame(self.startup_tab, style='Content.TFrame')
         startup_actions.pack(fill='x', padx=10, pady=(0, 6))
-        self.refresh_btn = ttk.Button(startup_actions, text='Refresh', style='Action.TButton', command=self.refresh)
+        self.refresh_btn = ttk.Button(startup_actions, text='Refresh', style='Primary.TButton',
+                                      command=self.refresh)
         self.refresh_btn.pack(side='left')
-        self.enable_btn = ttk.Button(startup_actions, text='Enable Selected', style='Action.TButton',
+        self.enable_btn = ttk.Button(startup_actions, text='Enable', style='Action.TButton',
                                      command=self.enable_selected)
-        self.enable_btn.pack(side='left', padx=6)
-        self.disable_btn = ttk.Button(startup_actions, text='Disable Selected', style='Action.TButton',
+        self.enable_btn.pack(side='left', padx=(8, 0))
+        self.disable_btn = ttk.Button(startup_actions, text='Disable', style='Action.TButton',
                                       command=self.disable_selected)
-        self.disable_btn.pack(side='left', padx=6)
-        self.copy_cmd_btn = ttk.Button(startup_actions, text='Copy Command', style='Action.TButton',
-                                       command=self.copy_command)
-        self.copy_cmd_btn.pack(side='left', padx=6)
-        self.status_lbl = ttk.Label(startup_actions, text='', style='Info.TLabel')
-        self.status_lbl.pack(side='right')
+        self.disable_btn.pack(side='left', padx=(6, 0))
 
-        container = ttk.Frame(self.startup_tab)
-        container.pack(fill='both', expand=True, padx=10, pady=(0, 4))
-        container.grid_rowconfigure(0, weight=1)
-        container.grid_columnconfigure(0, weight=1)
-        tree_frame = ttk.Frame(container)
-        tree_frame.grid(row=0, column=0, sticky='nsew')
+        self._startup_container = ttk.Frame(self.startup_tab)
+        self._startup_container.pack(fill='both', expand=True, padx=10, pady=(0, 4))
+        self._startup_container.grid_rowconfigure(0, weight=1)
+        self._startup_container.grid_columnconfigure(0, weight=1)
+
+        self._startup_tree_card = ttk.Frame(self._startup_container, style='Card.TFrame')
+        self._startup_tree_card.grid(row=0, column=0, sticky='nsew')
+        self._startup_tree_card.grid_rowconfigure(0, weight=1)
+        self._startup_tree_card.grid_columnconfigure(0, weight=1)
+
+        tree_frame = ttk.Frame(self._startup_tree_card, style='Card.TFrame')
+        tree_frame.grid(row=0, column=0, sticky='nsew', padx=8, pady=8)
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
         cols = ('name', 'source', 'location', 'command')
@@ -2050,9 +2053,9 @@ class StartupManagerGUI(ctk.CTk):
         for col, label in (('name', 'Name'), ('source', 'Source'), ('location', 'Location'), ('command', 'Command')):
             self.tree.heading(col, text=label, command=lambda c=col: self._sort_column(c))
         self.tree.column('name', width=170, anchor='w', stretch=False)
-        self.tree.column('source', width=110, anchor='center', stretch=False)
-        self.tree.column('location', width=180, anchor='w', stretch=False)
-        self.tree.column('command', width=280, anchor='w', stretch=False)
+        self.tree.column('source', width=100, anchor='center', stretch=False)
+        self.tree.column('location', width=160, anchor='w', stretch=False)
+        self.tree.column('command', width=240, anchor='w', stretch=False)
         self.tree.tag_configure('oddrow', background=CARD_BG)
         self.tree.tag_configure('evenrow', background=ROW_ALT)
         self.tree.bind('<<TreeviewSelect>>', self._on_row_select)
@@ -2066,30 +2069,54 @@ class StartupManagerGUI(ctk.CTk):
         vscroll.grid(row=0, column=1, sticky='ns')
         hscroll.grid(row=1, column=0, sticky='ew')
 
-        self._startup_detail_frame = ttk.Labelframe(container, text='Details', style='Detail.TLabelframe')
-        self._startup_detail_frame.grid(row=1, column=0, sticky='ew', pady=(8, 0))
-        details_grid = ttk.Frame(self._startup_detail_frame, style='Detail.TLabelframe')
-        details_grid.pack(fill='x', padx=10, pady=10)
-        self.detail_name = ttk.Label(details_grid, text='Name: —', style='CardInfo.TLabel')
-        self.detail_source = ttk.Label(details_grid, text='Source: —', style='CardInfo.TLabel')
-        self.detail_location = ttk.Label(details_grid, text='Location: —', style='CardInfo.TLabel')
-        self.detail_command = ttk.Label(details_grid, text='Command: —', style='CardInfo.TLabel')
-        self.detail_name.grid(row=0, column=0, sticky='w', padx=(0, 12), pady=2)
-        self.detail_source.grid(row=0, column=1, sticky='w', padx=(0, 12), pady=2)
-        self.detail_location.grid(row=1, column=0, sticky='w', padx=(0, 12), pady=2, columnspan=2)
-        self.detail_command.grid(row=2, column=0, sticky='w', padx=(0, 12), pady=2, columnspan=2)
-        self.detail_hint = ttk.Label(details_grid, text='', style='CardInfo.TLabel',
-                                     foreground=ACCENT, wraplength=720, justify='left')
-        self.detail_hint.grid(row=3, column=0, sticky='w', padx=(0, 12), pady=(6, 2), columnspan=2)
-        self.copy_command_detail = ttk.Button(self._startup_detail_frame, text='Copy Command',
+        self._startup_detail_panel = ttk.Frame(self._startup_container, style='Card.TFrame')
+        self._startup_detail_panel.grid(row=0, column=1, sticky='ns')
+        detail_inner = ttk.Frame(self._startup_detail_panel, style='Card.TFrame')
+        detail_inner.pack(fill='both', expand=True, padx=12, pady=12)
+        ttk.Label(detail_inner, text='Details', font=('Segoe UI', 11, 'bold'),
+                  background=CARD_BG).pack(anchor='w', pady=(0, 8))
+
+        def _detail_row(label_text, attr_name):
+            block = ttk.Frame(detail_inner, style='Card.TFrame')
+            block.pack(fill='x', pady=(0, 8))
+            ttk.Label(block, text=label_text, style='CardInfo.TLabel',
+                      font=('Segoe UI', 9, 'bold')).pack(anchor='w')
+            lbl = ttk.Label(block, text='—', style='CardInfo.TLabel', wraplength=280, justify='left')
+            lbl.pack(anchor='w', pady=(2, 0))
+            setattr(self, attr_name, lbl)
+            return lbl
+
+        self.detail_name = _detail_row('Name', 'detail_name')
+        self.detail_source = _detail_row('Source', 'detail_source')
+        self.detail_location = _detail_row('Location', 'detail_location')
+
+        cmd_block = ttk.Frame(detail_inner, style='Card.TFrame')
+        cmd_block.pack(fill='x', pady=(0, 8))
+        ttk.Label(cmd_block, text='Command', style='CardInfo.TLabel',
+                  font=('Segoe UI', 9, 'bold')).pack(anchor='w')
+        self.detail_command_text = tk.Text(
+            cmd_block, height=4, wrap='word', font=('Consolas', 9), relief='flat',
+            bg=PREVIEW_BG, fg=TEXT, insertbackground=TEXT, highlightthickness=0)
+        self.detail_command_text.pack(fill='x', pady=(2, 0))
+        self.detail_command_text.configure(state='disabled')
+
+        self.detail_hint = ttk.Label(detail_inner, text='', style='CardInfo.TLabel',
+                                     foreground=ACCENT, wraplength=280, justify='left')
+        self.detail_hint.pack(anchor='w', pady=(4, 8))
+
+        detail_btns = ttk.Frame(detail_inner, style='Card.TFrame')
+        detail_btns.pack(fill='x')
+        self.copy_command_detail = ttk.Button(detail_btns, text='Copy Command',
                                               style='Action.TButton', command=self.copy_command)
-        self.copy_command_detail.pack(anchor='e', padx=10, pady=(0, 8))
+        self.copy_command_detail.pack(side='left')
+
+        self._startup_split_mode = None
+        self._startup_detail_frame = self._startup_detail_panel
 
         self._add_tooltip(self.refresh_btn, 'Refresh the startup list from registry and startup folders.')
         self._add_tooltip(self.enable_btn, 'Enable the selected registry startup item.')
-        self._add_tooltip(self.disable_btn, 'Disable the selected registry startup item.')
-        self._add_tooltip(self.copy_cmd_btn, 'Copy the selected command text to clipboard.')
-        self._add_tooltip(self.copy_command_detail, 'Copy the selected command from the detail panel.')
+        self._add_tooltip(self.disable_btn, 'Disable the selected startup item (backed up, restorable).')
+        self._add_tooltip(self.copy_command_detail, 'Copy the full command line to the clipboard.')
 
     def _build_cleaner_tab(self):
         self.cleanup_tab.grid_rowconfigure(2, weight=1)
@@ -2339,20 +2366,93 @@ class StartupManagerGUI(ctk.CTk):
         )
         _select_settings_section('General')
 
-        local_body = settings_card(
-            self._settings_section_frames['General'], 'Local-only', card_bg=CARD_BG, accent=ACCENT)
+        general = self._settings_section_frames['General']
+
+        local_body = settings_card(general, 'Local-only proof mode', card_bg=CARD_BG, accent=ACCENT)
         ctk_theme.label(
             local_body, ctk_theme.LOCAL_ONLY_TEXT, text_color=TEXT, font_size=11,
-            wraplength=720, justify='left',
+            wraplength=680, justify='left',
         ).pack(anchor='w')
+        ctk_theme.label(
+            local_body,
+            'All receipts, custody checks, and proof packs stay on this PC. '
+            'Nothing is uploaded or shared.',
+            text_color=MUTED, font_size=10, wraplength=680, justify='left',
+        ).pack(anchor='w', pady=(6, 0))
+
+        app_body = settings_card(general, 'Application', card_bg=CARD_BG, accent=ACCENT)
+        ctk_theme.label(
+            app_body,
+            'Startup behavior, appearance, and window preferences.',
+            text_color=MUTED, font_size=10, wraplength=680, justify='left',
+        ).pack(anchor='w', pady=(0, 8))
 
         self.set_scan_on_startup = tk.BooleanVar(
             value=bool(load_ui_prefs().get('scan_on_startup', False)))
         ctk_theme.switch(
-            local_body, 'Scan on startup (default off)', self.set_scan_on_startup,
+            app_body, 'Scan on startup (default off)', self.set_scan_on_startup,
             text_color=TEXT, progress_color=ACCENT,
             button_color=BORDER, button_hover_color=ACCENT,
-        ).pack(anchor='w', pady=(10, 0))
+        ).pack(anchor='w', pady=(0, 4))
+
+        self.set_remember_geometry = tk.BooleanVar(
+            value=bool(load_ui_prefs().get('remember_window_geometry', True)))
+        ctk_theme.switch(
+            app_body, 'Remember window size and position', self.set_remember_geometry,
+            text_color=TEXT, progress_color=ACCENT,
+            button_color=BORDER, button_hover_color=ACCENT,
+        ).pack(anchor='w', pady=(0, 4))
+
+        self.set_remember_last_tab = tk.BooleanVar(
+            value=bool(load_ui_prefs().get('remember_last_tab', True)))
+        ctk_theme.switch(
+            app_body, 'Remember last tab on launch', self.set_remember_last_tab,
+            text_color=TEXT, progress_color=ACCENT,
+            button_color=BORDER, button_hover_color=ACCENT,
+        ).pack(anchor='w', pady=(0, 8))
+
+        theme_row = ttk.Frame(app_body, style='Card.TFrame')
+        theme_row.pack(fill='x', pady=(0, 4))
+        ttk.Label(theme_row, text='Theme:', style='CardInfo.TLabel').pack(side='left')
+        self.set_theme_var = tk.StringVar(value=PALETTES[CURRENT_THEME]['LABEL'])
+        theme_combo = ttk.Combobox(theme_row, textvariable=self.set_theme_var, state='readonly',
+                                   values=[PALETTES[t]['LABEL'] for t in THEME_ORDER], width=22)
+        theme_combo.pack(side='left', padx=(8, 0))
+        self._add_tooltip(theme_combo, 'Applied when you click Save Settings (window rebuilds).')
+
+        launch_row = ttk.Frame(app_body, style='Card.TFrame')
+        launch_row.pack(fill='x', pady=(4, 0))
+        ttk.Label(launch_row, text='Default tab when not remembering:',
+                  style='CardInfo.TLabel').pack(side='left')
+        self.set_default_tab_var = tk.StringVar(value='Home')
+        ttk.Combobox(
+            launch_row, textvariable=self.set_default_tab_var, state='readonly', width=18,
+            values=('Home', 'Activity', 'Startup', 'Cleaner', 'Archive', 'Settings'),
+        ).pack(side='left', padx=(8, 0))
+
+        config_body = settings_card(general, 'Configuration', card_bg=CARD_BG, accent=ACCENT)
+        ctk_theme.label(
+            config_body,
+            'Cleanup rules live in a local YAML file. Open it to inspect or edit directly.',
+            text_color=MUTED, font_size=10, wraplength=680, justify='left',
+        ).pack(anchor='w', pady=(0, 8))
+        self._settings_config_path_lbl = ctk_theme.label(
+            config_body, '', text_color=TEXT, font_size=10, wraplength=680, justify='left')
+        self._settings_config_path_lbl.pack(anchor='w', pady=(0, 8))
+        cfg_btns = ttk.Frame(config_body, style='Card.TFrame')
+        cfg_btns.pack(fill='x')
+        ttk.Button(cfg_btns, text='Open config file', style='Action.TButton',
+                   command=self._settings_open_config).pack(side='left')
+        ttk.Button(cfg_btns, text='Open data folder', style='Action.TButton',
+                   command=self._settings_open_data_dir).pack(side='left', padx=(8, 0))
+
+        self.set_power_var = tk.BooleanVar(value=bool(load_ui_prefs().get('power_user')))
+        adv_local = settings_card(general, 'Display density', card_bg=CARD_BG, accent=ACCENT)
+        ctk_theme.switch(
+            adv_local, 'Power user mode (denser tables)', self.set_power_var,
+            text_color=TEXT, progress_color=ACCENT,
+            button_color=BORDER, button_hover_color=ACCENT,
+        ).pack(anchor='w')
 
         shell_body = settings_card(
             self._settings_section_frames['Explorer'], 'Explorer integration', card_bg=CARD_BG, accent=ACCENT)
@@ -2373,7 +2473,6 @@ class StartupManagerGUI(ctk.CTk):
         self.set_scan_temp = tk.BooleanVar(value=True)
         self.set_relaxed_scan = tk.BooleanVar(value=False)
         self.set_dedupe_default = self.dedupe_enabled
-        self.set_power_var = tk.BooleanVar(value=bool(load_ui_prefs().get('power_user')))
 
         scan_body = settings_card(
             self._settings_section_frames['Scan'], 'Scan folders', card_bg=CARD_BG, accent=ACCENT)
@@ -2452,7 +2551,6 @@ class StartupManagerGUI(ctk.CTk):
         _quick_switch(1, 0, 'Relaxed scan (for testing / empty folders)',
                        self.set_relaxed_scan, self._settings_relaxed_toggle)
         _quick_switch(1, 1, 'Deduplicate before archive', self.set_dedupe_default)
-        _quick_switch(2, 0, 'Power user mode (dense lists)', self.set_power_var)
 
         archive_body = settings_card(
             self._settings_section_frames['Archive'], 'Archive custody', card_bg=CARD_BG, accent=ACCENT)
@@ -2492,30 +2590,6 @@ class StartupManagerGUI(ctk.CTk):
                    command=self.open_last_receipt).pack(side='left')
         ttk.Button(receipt_btns, text='Proof Pack (HTML)', style='Action.TButton',
                    command=self.export_audit).pack(side='left', padx=(8, 0))
-
-        ttk.Label(grid, text='Theme:', style='CardInfo.TLabel').grid(row=6, column=0, sticky='w', pady=(10, 3))
-        self.set_theme_var = tk.StringVar(value=PALETTES[CURRENT_THEME]['LABEL'])
-        theme_combo = ttk.Combobox(grid, textvariable=self.set_theme_var, state='readonly',
-                                   values=[PALETTES[t]['LABEL'] for t in THEME_ORDER], width=20)
-        theme_combo.grid(row=6, column=1, sticky='w', pady=(10, 3))
-
-        def _apply_ui():
-            prefs = load_ui_prefs()
-            label = self.set_theme_var.get()
-            for t in THEME_ORDER:
-                if PALETTES[t]['LABEL'] == label:
-                    prefs['theme'] = t
-                    break
-            prefs['power_user'] = bool(self.set_power_var.get())
-            save_ui_prefs(prefs)
-            apply_palette(prefs.get('theme', 'dark'))
-            self.wants_restart = True
-            self.destroy()
-
-        apply_ui_btn = ttk.Button(grid, text='Save UI Settings', style='Action.TButton',
-                                  command=_apply_ui)
-        apply_ui_btn.grid(row=6, column=2, sticky='w', padx=(6, 0), pady=(10, 3))
-        self._add_tooltip(apply_ui_btn, 'Applies instantly — the window rebuilds with the new look.')
 
         safety_body = settings_card(
             self._settings_section_frames['Advanced'], 'Advanced safety rules', card_bg=CARD_BG, accent=ACCENT)
@@ -2634,8 +2708,35 @@ class StartupManagerGUI(ctk.CTk):
         self.set_whitelist_text.delete('1.0', 'end')
         self.set_whitelist_text.insert('1.0', '\n'.join(cfg.get('whitelist', []) or []))
         self.set_prune_recent_days.set(int(cfg.get('prune_recent_days', 7)))
-        self.set_scan_on_startup.set(bool(load_ui_prefs().get('scan_on_startup', False)))
+        prefs = load_ui_prefs()
+        self.set_scan_on_startup.set(bool(prefs.get('scan_on_startup', False)))
+        self.set_remember_geometry.set(bool(prefs.get('remember_window_geometry', True)))
+        self.set_remember_last_tab.set(bool(prefs.get('remember_last_tab', True)))
+        self.set_power_var.set(bool(prefs.get('power_user', False)))
+        self.set_theme_var.set(PALETTES.get(prefs.get('theme', CURRENT_THEME), PALETTES[CURRENT_THEME])['LABEL'])
+        default_map = {0: 'Home', 1: 'Activity', 2: 'Startup', 3: 'Cleaner', 6: 'Archive', 7: 'Settings'}
+        self.set_default_tab_var.set(prefs.get('default_tab') or default_map.get(int(prefs.get('last_tab', 0)), 'Home'))
+        if hasattr(self, '_settings_config_path_lbl'):
+            self._settings_config_path_lbl.configure(text=f'Active config: {self._config_status_label()}')
         self.settings_status_lbl.config(text=self._config_status_label())
+
+    def _settings_open_config(self):
+        path = Path(self.cleanup_config_path)
+        if not path.exists():
+            messagebox.showinfo('Config', 'Config file not found yet. Save Settings first to create it.')
+            return
+        try:
+            os.startfile(str(path))
+        except Exception as e:
+            messagebox.showerror('Config', f'Unable to open config file:\n{e}')
+
+    def _settings_open_data_dir(self):
+        folder = brand.user_data_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(folder))
+        except Exception as e:
+            messagebox.showerror('Data folder', f'Unable to open data folder:\n{e}')
 
     def save_settings(self):
         try:
@@ -2662,15 +2763,33 @@ class StartupManagerGUI(ctk.CTk):
         })
         self.dedupe_enabled.set(bool(self.set_dedupe_default.get()))
         prefs = load_ui_prefs()
+        old_theme = prefs.get('theme', CURRENT_THEME)
         prefs['scan_on_startup'] = bool(self.set_scan_on_startup.get())
+        prefs['remember_window_geometry'] = bool(self.set_remember_geometry.get())
+        prefs['remember_last_tab'] = bool(self.set_remember_last_tab.get())
+        prefs['default_tab'] = self.set_default_tab_var.get()
+        prefs['power_user'] = bool(self.set_power_var.get())
+        label = self.set_theme_var.get()
+        new_theme = old_theme
+        for t in THEME_ORDER:
+            if PALETTES[t]['LABEL'] == label:
+                new_theme = t
+                prefs['theme'] = t
+                break
         save_ui_prefs(prefs)
         try:
             written_to = self._write_config(cfg)
         except Exception as e:
             messagebox.showerror('Settings', f'Unable to save settings:\n{e}')
             return
-        self.settings_status_lbl.config(text='Cleanroom configuration saved')
+        self.settings_status_lbl.config(text='Settings saved')
         self._set_status('Settings saved. Click Scan to apply new paths.')
+        theme_changed = new_theme != old_theme
+        power_changed = bool(self.set_power_var.get()) != bool(self.power_user)
+        if theme_changed or power_changed:
+            apply_palette(new_theme)
+            self.wants_restart = True
+            self.destroy()
 
     def _write_config(self, cfg):
         """Write config to the active path; fall back to the per-user copy if
@@ -5537,11 +5656,11 @@ class StartupManagerGUI(ctk.CTk):
         tasks = len(self.data.get('tasks', []))
         disabled = len(self.data.get('disabled', []))
         total = folders + registry + tasks
-        self.total_label.config(text=f'Total: {total}')
-        self.folder_label.config(text=f'Folders: {folders}')
-        self.registry_label.config(text=f'Registry: {registry}')
-        self.tasks_label.config(text=f'Tasks: {tasks}')
-        self.disabled_label.config(text=f'Disabled: {disabled}')
+        self.total_label.config(text=str(total))
+        self.folder_label.config(text=str(folders))
+        self.registry_label.config(text=str(registry))
+        self.tasks_label.config(text=str(tasks))
+        self.disabled_label.config(text=str(disabled))
 
     def _selected_entry(self):
         sel = self.tree.selection()
@@ -5559,17 +5678,23 @@ class StartupManagerGUI(ctk.CTk):
     def _update_detail(self):
         ent = self._selected_entry()
         if not ent:
-            self.detail_name.config(text='Name: —')
-            self.detail_source.config(text='Source: —')
-            self.detail_location.config(text='Location: —')
-            self.detail_command.config(text='Command: —')
-            self.detail_hint.config(text='Select a startup item above to see its command and available actions.')
+            self.detail_name.config(text='—')
+            self.detail_source.config(text='—')
+            self.detail_location.config(text='—')
+            self.detail_command_text.configure(state='normal')
+            self.detail_command_text.delete('1.0', 'end')
+            self.detail_command_text.insert('1.0', '—')
+            self.detail_command_text.configure(state='disabled')
+            self.detail_hint.config(text='Select a startup item to review its command and available actions.')
             self._update_context_panel()
             return
-        self.detail_name.config(text=f"Name: {ent.get('name') or '—'}")
-        self.detail_source.config(text=f"Source: {ent.get('source') or '—'}")
-        self.detail_location.config(text=f"Location: {ent.get('location') or '—'}")
-        self.detail_command.config(text=f"Command: {ent.get('command') or '—'}")
+        self.detail_name.config(text=ent.get('name') or '—')
+        self.detail_source.config(text=ent.get('source') or '—')
+        self.detail_location.config(text=ent.get('location') or '—')
+        self.detail_command_text.configure(state='normal')
+        self.detail_command_text.delete('1.0', 'end')
+        self.detail_command_text.insert('1.0', ent.get('command') or '—')
+        self.detail_command_text.configure(state='disabled')
         src = (ent.get('source') or '').lower()
         if src == 'registry':
             hint = ('Registry Run key — Disable Selected backs up the value and stops this at sign-in. '
