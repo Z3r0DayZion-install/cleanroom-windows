@@ -304,3 +304,66 @@ def sidebar_section(parent, title: str, *, sidebar_bg: str, muted: str) -> ctk.C
     wrap = ctk_theme.frame(parent, sidebar_bg)
     wrap.pack(fill='x', padx=4)
     return wrap
+
+
+def collapsible_section(
+    parent,
+    title: str,
+    *,
+    sidebar_bg: str,
+    muted: str,
+    text_color: str,
+    start_open: bool = True,
+) -> tuple[ctk.CTkButton, ctk.CTkFrame]:
+    """Collapsible sidebar group; returns (toggle_button, body_frame)."""
+    block = ctk_theme.frame(parent, sidebar_bg)
+    block.pack(fill='x', padx=2, pady=(0, 4))
+    state = {'open': start_open}
+
+    header = ctk_theme.frame(block, sidebar_bg)
+    header.pack(fill='x')
+    body = ctk_theme.frame(block, sidebar_bg)
+    if start_open:
+        body.pack(fill='x', padx=4, pady=(2, 0))
+
+    toggle = ctk_theme.button(
+        header,
+        f'{"▾" if start_open else "▸"} {title}',
+        lambda: None,
+        fg_color='transparent',
+        hover_color=sidebar_bg,
+        text_color=muted,
+        anchor='w',
+        height=22,
+    )
+    toggle.pack(fill='x', padx=6)
+
+    def _flip():
+        state['open'] = not state['open']
+        if state['open']:
+            body.pack(fill='x', padx=4, pady=(2, 0))
+            toggle.configure(text=f'▾ {title}')
+        else:
+            body.pack_forget()
+            toggle.configure(text=f'▸ {title}')
+
+    toggle.configure(command=_flip)
+    return toggle, body
+
+
+def quick_nav_chip(
+    parent,
+    label: str,
+    command,
+    *,
+    sidebar_bg: str,
+    accent_soft: str,
+    accent: str,
+    text_color: str,
+) -> ctk.CTkButton:
+    """Compact sidebar quick-nav chip."""
+    return ctk_theme.button(
+        parent, label, command,
+        fg_color=accent_soft, hover_color=accent, text_color=text_color,
+        height=28, corner_radius=8,
+    )

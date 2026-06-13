@@ -18,11 +18,12 @@ from ui.receipt_animation import (
 from ui.proof_dashboard import (
     CommandBar,
     ProofDrawer,
+    collapsible_section,
     proof_card,
+    quick_nav_chip,
     recent_proof_tile,
     settings_card,
     settings_section_nav,
-    sidebar_section,
     trust_card,
 )
 import tkinter as tk
@@ -546,8 +547,12 @@ class StartupManagerGUI(ctk.CTk):
 
     def _update_responsive_layout(self):
         try:
-            w = self.winfo_width()
-            h = self.winfo_height()
+            scale = float(self.tk.call('tk', 'scaling'))
+        except Exception:
+            scale = 1.0
+        try:
+            w = int(self.winfo_width() / scale)
+            h = int(self.winfo_height() / scale)
         except Exception:
             return
         if w < 200:
@@ -557,6 +562,11 @@ class StartupManagerGUI(ctk.CTk):
             self.ctx_desc_lbl.configure(wraplength=wrap)
         if hasattr(self, 'ctx_next_lbl'):
             self.ctx_next_lbl.configure(wraplength=max(280, min(720, w - 340)))
+        if hasattr(self, '_ctx_quick_row'):
+            if h < 620 or w < 860:
+                self._ctx_quick_row.pack_forget()
+            else:
+                self._ctx_quick_row.pack(fill='x', padx=14, pady=(0, 8))
         if hasattr(self, 'ctx_subtitle_lbl'):
             if h < 680:
                 self.ctx_subtitle_lbl.pack_forget()
@@ -574,7 +584,11 @@ class StartupManagerGUI(ctk.CTk):
             else:
                 self._proof_flow_lbl.pack(side='right', padx=(8, 0))
         if hasattr(self, '_hdr_summary') and hasattr(self, '_hdr_hero'):
-            self._hdr_summary.pack(fill='x', pady=(10, 0))
+            if h < 620:
+                self._hdr_badges.grid_remove()
+                self._hdr_hero.grid(row=0, column=0, columnspan=5, sticky='ew')
+            else:
+                self._hdr_summary.pack(fill='x', pady=(10, 0))
             try:
                 scale = float(self.tk.call('tk', 'scaling'))
             except Exception:
@@ -601,20 +615,35 @@ class StartupManagerGUI(ctk.CTk):
                 self._archive_banner.pack_forget()
             else:
                 self._archive_banner.pack(fill='x', pady=(8, 0))
+        if hasattr(self, '_home_recent'):
+            if h < 660:
+                self._home_recent.grid_remove()
+            else:
+                self._home_recent.grid(row=2, column=0, sticky='ew', padx=10, pady=(0, 6))
+        if hasattr(self, '_home_fs'):
+            if h < 640:
+                self._home_fs.grid_remove()
+            else:
+                self._home_fs.grid(row=3, column=0, sticky='ew', padx=10, pady=(0, 6))
+        if hasattr(self, '_home_rec'):
+            if h < 720:
+                self._home_rec.grid_remove()
+            else:
+                self._home_rec.grid(row=4, column=0, sticky='nsew', padx=10, pady=(0, 8))
         if hasattr(self, '_command_bar'):
             self._command_bar.set_compact_labels(w < 1000)
-        if hasattr(self, '_body_grid'):
-            if w > MAX_SIZE[0] + 32:
-                center_w = MAX_SIZE[0]
-                self._body_center.grid(row=0, column=1, columnspan=1, sticky='ns')
-                self._body_grid.grid_columnconfigure(0, weight=1)
-                self._body_grid.grid_columnconfigure(1, weight=0, minsize=center_w)
-                self._body_grid.grid_columnconfigure(2, weight=1)
+        if hasattr(self, '_body_grid') and hasattr(self, '_body_center'):
+            if w > MAX_SIZE[0] + 48:
+                gutter = max(0, (w - MAX_SIZE[0]) // 2)
+                self._body_center.grid(row=0, column=1, columnspan=1, sticky='nsew', padx=0)
+                self._body_grid.grid_columnconfigure(0, weight=1, minsize=gutter)
+                self._body_grid.grid_columnconfigure(1, weight=0, minsize=min(MAX_SIZE[0], w - 2 * gutter))
+                self._body_grid.grid_columnconfigure(2, weight=1, minsize=gutter)
             else:
-                center_w = max(MIN_SIZE[0], w - 12)
                 self._body_center.grid(row=0, column=0, columnspan=3, sticky='nsew')
+                self._body_grid.grid_columnconfigure(0, weight=1, minsize=0)
                 self._body_grid.grid_columnconfigure(1, weight=0, minsize=0)
-            self._body_center.configure(width=center_w)
+                self._body_grid.grid_columnconfigure(2, weight=0, minsize=0)
         tree_rows = max(5, min(14, (h - 380) // 26))
         if hasattr(self, 'cleanup_tree'):
             path_w = max(160, min(520, (getattr(self, '_body_center', None) or self).winfo_width() - 300))
@@ -623,8 +652,23 @@ class StartupManagerGUI(ctk.CTk):
             self.rec_tree.configure(height=tree_rows)
         if hasattr(self, 'archive_tree'):
             self.archive_tree.configure(height=tree_rows)
-        self._layout_restore_split(w)
-        self._layout_archive_split(w)
+        if hasattr(self, '_layout_restore_split'):
+            self._layout_restore_split(w)
+        if hasattr(self, '_layout_archive_split'):
+            self._layout_archive_split(w)
+        if hasattr(self, '_uninst_quiet_cb'):
+            compact_uninst = w < 980
+            if compact_uninst:
+                self._uninst_quiet_cb.pack_forget()
+                self.uninst_leftover_btn.pack_forget()
+            else:
+                self._uninst_quiet_cb.pack(side='left', padx=6)
+                self.uninst_leftover_btn.pack(side='right')
+            if w < 920:
+                self.uninst_force_btn.pack_forget()
+            else:
+                self.uninst_force_btn.pack(side='right', padx=6)
+            self.uninst_uninstall_btn.pack(side='right', padx=6)
         preview_w = max(240, min(360, int(max(w - 280, 640) * 0.34)))
         if hasattr(self, '_restore_preview_panel'):
             self._restore_preview_panel.configure(width=preview_w)
@@ -813,9 +857,11 @@ class StartupManagerGUI(ctk.CTk):
         self._body_grid.grid_columnconfigure(1, weight=0)
         self._body_grid.grid_columnconfigure(2, weight=1)
         ttk.Frame(self._body_grid).grid(row=0, column=0, sticky='nsew')
-        self._body_center = tk.Frame(self._body_grid, bg=BG, width=MAX_SIZE[0])
-        self._body_center.grid(row=0, column=1, sticky='ns')
-        self._body_center.grid_propagate(False)
+        self._body_center = tk.Frame(self._body_grid, bg=BG)
+        self._body_center.grid(row=0, column=0, columnspan=3, sticky='nsew')
+        self._body_grid.grid_columnconfigure(0, weight=1)
+        self._body_grid.grid_columnconfigure(1, weight=0)
+        self._body_grid.grid_columnconfigure(2, weight=0)
         ttk.Frame(self._body_grid).grid(row=0, column=2, sticky='nsew')
 
         shell = self._body_center
@@ -1022,6 +1068,22 @@ class StartupManagerGUI(ctk.CTk):
         self.ctx_next_lbl.pack(side='left', fill='x', expand=True)
         self.ctx_desc_lbl = None
 
+        quick_row = ctk_theme.frame(bar, SIDEBAR_BG)
+        quick_row.pack(fill='x', padx=14, pady=(0, 8))
+        self._ctx_quick_nav = []
+        for label, idx in (
+            ('Home', 0), ('Cleaner', 3), ('Archive', 6), ('Activity', 1),
+            ('Startup', 2), ('Settings', 7),
+        ):
+            btn = quick_nav_chip(
+                quick_row, label, lambda i=idx: self._navigate_to_tab(i),
+                sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT,
+                accent=ACCENT, text_color=TEXT,
+            )
+            btn.pack(side='left', padx=(0, 6))
+            self._ctx_quick_nav.append((idx, btn))
+        self._ctx_quick_row = quick_row
+
     def _update_context_panel(self):
         try:
             tab_idx = self.tab_control.index('current')
@@ -1083,7 +1145,7 @@ class StartupManagerGUI(ctk.CTk):
 
     def _navigate_to_tab(self, idx):
         self.tab_control.select(idx)
-        self._update_context_panel()
+        self._sync_nav_buttons()
 
     def set_theme(self, name):
         if name not in PALETTES:
@@ -1102,87 +1164,113 @@ class StartupManagerGUI(ctk.CTk):
     def _build_sidebar(self, parent):
         sidebar = ctk_theme.frame(parent, SIDEBAR_BG, corner_radius=10)
         sidebar.pack(side='left', fill='y', padx=(0, 12), pady=(0, 6))
-        sidebar.configure(width=196)
+        sidebar.configure(width=210)
         sidebar.pack_propagate(False)
         sidebar.grid_rowconfigure(3, weight=1)
         sidebar.grid_columnconfigure(0, weight=1)
 
         ctk_theme.label(sidebar, brand.APP_DISPLAY, text_color=TEXT,
                         font_size=13, weight='bold').grid(
-            row=0, column=0, sticky='ew', padx=12, pady=(14, 10))
+            row=0, column=0, sticky='ew', padx=12, pady=(14, 8))
 
-        nav_host = ctk_theme.frame(sidebar, SIDEBAR_BG)
-        nav_host.grid(row=2, column=0, sticky='ew', padx=4)
-        self._nav_buttons = []
-        nav_groups = (
-            ('Main', (
-                (0, '🏠  Home', 'Proof home — custody status and next archive-first action.'),
-                (1, '📊  Activity', 'Activity ledger — every archive with timestamps.'),
-                (3, '🧹  Cleaner', 'Scan folders and archive reviewed files to custody.'),
-                (6, '🗂️  Archive', 'Archive custody — browse, delete, reclaim disk space.'),
-            )),
-            ('System', (
-                (2, '🚀  Startup', 'Startup programs — filter by source, enable or disable.'),
-                (4, '🗑  Uninstaller', 'Uninstall programs and archive leftovers.'),
-                (5, '↩  Restore', 'Restore archived files from the cleanup log.'),
-                (7, '⚙  Settings', 'Scan paths, ages, archive folder, quick toggles.'),
-            )),
-        )
-        for section_title, items in nav_groups:
-            wrap = sidebar_section(nav_host, section_title, sidebar_bg=SIDEBAR_BG, muted=MUTED)
-            for idx, label, tip in items:
-                btn = ctk_theme.button(
-                    wrap, label, lambda i=idx: self._navigate_to_tab(i),
-                    fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
-                btn.pack(fill='x', pady=2, padx=4)
-                self._nav_buttons.append((idx, btn))
-                self._add_tooltip(btn, tip)
+        quick = ctk_theme.frame(sidebar, SIDEBAR_BG)
+        quick.grid(row=1, column=0, sticky='ew', padx=8, pady=(0, 4))
+        ctk_theme.label(quick, 'Quick nav', text_color=MUTED, font_size=9, weight='bold').pack(
+            anchor='w', padx=2, pady=(0, 4))
+        quick_grid = ctk_theme.frame(quick, SIDEBAR_BG)
+        quick_grid.pack(fill='x')
+        for col in range(2):
+            quick_grid.grid_columnconfigure(col, weight=1)
+        self._quick_nav_buttons = []
+        for i, (idx, label) in enumerate(((0, 'Home'), (3, 'Cleaner'), (6, 'Archive'), (1, 'Activity'))):
+            btn = quick_nav_chip(
+                quick_grid, label, lambda tab=idx: self._navigate_to_tab(tab),
+                sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT,
+                accent=ACCENT, text_color=TEXT,
+            )
+            btn.grid(row=i // 2, column=i % 2, sticky='ew', padx=2, pady=2)
+            self._quick_nav_buttons.append((idx, btn))
 
         self._sidebar_explorer_btn = ctk_theme.button(
             sidebar, 'Explorer Context Menus…', self.open_shell_context_menu_tool,
             fg_color=ACCENT_SOFT, hover_color=ACCENT, text_color=ACCENT,
         )
-        self._sidebar_explorer_btn.grid(row=1, column=0, sticky='ew', padx=8, pady=(0, 6))
+        self._sidebar_explorer_btn.grid(row=2, column=0, sticky='ew', padx=8, pady=(0, 4))
         self._add_tooltip(
             self._sidebar_explorer_btn,
             'Build and install Windows Explorer right-click menus (HKCU, per-user).\n'
             'Add presets or custom menus, then Install to Explorer.',
         )
 
-        tools_scroll = ctk.CTkScrollableFrame(
-            sidebar, fg_color=SIDEBAR_BG, corner_radius=0, width=184,
+        nav_scroll = ctk.CTkScrollableFrame(
+            sidebar, fg_color=SIDEBAR_BG, corner_radius=0, width=194,
             scrollbar_button_color=BORDER, scrollbar_button_hover_color=ACCENT_SOFT,
         )
-        tools_scroll.grid(row=3, column=0, sticky='nsew', padx=4, pady=(4, 4))
-        self._sidebar_tools_scroll = tools_scroll
+        nav_scroll.grid(row=3, column=0, sticky='nsew', padx=4, pady=(0, 4))
+        self._sidebar_nav_scroll = nav_scroll
+        self._nav_buttons = []
 
-        ctk_theme.label(tools_scroll, 'Tools', text_color=MUTED, font_size=10, weight='bold').pack(
-            anchor='w', padx=8, pady=(4, 6))
+        _, main_body = collapsible_section(
+            nav_scroll, 'Main', sidebar_bg=SIDEBAR_BG, muted=MUTED,
+            text_color=TEXT, start_open=False,
+        )
+        for idx, label, tip in (
+            (0, '🏠  Home', 'Proof home — custody status and next archive-first action.'),
+            (1, '📊  Activity', 'Activity ledger — every archive with timestamps.'),
+            (3, '🧹  Cleaner', 'Scan folders and archive reviewed files to custody.'),
+            (6, '🗂️  Archive', 'Archive custody — browse, delete, reclaim disk space.'),
+        ):
+            btn = ctk_theme.button(
+                main_body, label, lambda i=idx: self._navigate_to_tab(i),
+                fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
+            btn.pack(fill='x', pady=2, padx=2)
+            self._nav_buttons.append((idx, btn))
+            self._add_tooltip(btn, tip)
+
+        _, sys_body = collapsible_section(
+            nav_scroll, 'System', sidebar_bg=SIDEBAR_BG, muted=MUTED,
+            text_color=TEXT, start_open=False,
+        )
+        for idx, label, tip in (
+            (2, '🚀  Startup', 'Startup programs — filter by source, enable or disable.'),
+            (4, '🗑  Uninstaller', 'Uninstall programs and archive leftovers.'),
+            (5, '↩  Restore', 'Restore archived files from the cleanup log.'),
+            (7, '⚙  Settings', 'Scan paths, ages, archive folder, quick toggles.'),
+        ):
+            btn = ctk_theme.button(
+                sys_body, label, lambda i=idx: self._navigate_to_tab(i),
+                fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
+            btn.pack(fill='x', pady=2, padx=2)
+            self._nav_buttons.append((idx, btn))
+            self._add_tooltip(btn, tip)
+
+        _, tools_body = collapsible_section(
+            nav_scroll, 'Tools', sidebar_bg=SIDEBAR_BG, muted=MUTED,
+            text_color=TEXT, start_open=False,
+        )
         tools = [
             ('Registry Snapshot', self.open_registry_health,
-             'Find registry entries pointing at missing files. Archive-first.'),
+             'Find registry entries pointing at missing files.'),
             ('Cleanroom Rewind', self.open_time_machine,
              'Roll back whole days of Cleanroom actions.'),
             ('Cleanroom Receipt', self.open_last_receipt,
-             'View the receipt from your most recent cleanup in-app.'),
+             'View the receipt from your most recent cleanup.'),
             ('Custody Check', self.verify_custody,
-             'Audit the entire history: prove every archived item\n'
-             'is still on disk and restorable, right now.'),
+             'Audit history — prove archived items are still on disk.'),
             ('Proof Pack (HTML)', self.export_audit,
-             'Generate a shareable HTML proof report of everything\n'
-             'Cleanroom has ever done on this PC.'),
+             'Generate a shareable HTML proof report.'),
             ('Schedule Cleanup', self.schedule_optimization,
              'Schedule recurring cleanup via Task Scheduler.'),
         ]
         for label, cmd, tip in tools:
             btn = ctk_theme.button(
-                tools_scroll, label, cmd,
+                tools_body, label, cmd,
                 fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
-            btn.pack(fill='x', pady=2, padx=6)
+            btn.pack(fill='x', pady=2, padx=2)
             self._add_tooltip(btn, tip)
 
         footer = ctk_theme.frame(sidebar, SIDEBAR_BG)
-        footer.grid(row=4, column=0, sticky='ew', padx=10, pady=(0, 10))
+        footer.grid(row=4, column=0, sticky='ew', padx=10, pady=(4, 10))
         ctk_theme.label(footer, 'F5 refresh · Ctrl+F search · Ctrl+1–8 tabs',
                         text_color=MUTED, font_size=9).pack(anchor='w')
 
@@ -1198,6 +1286,22 @@ class StartupManagerGUI(ctk.CTk):
             else:
                 btn.configure(fg_color='transparent', text_color=TEXT,
                               font=ctk_theme.font(11, 'normal'))
+        if hasattr(self, '_quick_nav_buttons'):
+            for i, btn in self._quick_nav_buttons:
+                if i == current:
+                    btn.configure(fg_color=ACCENT, text_color=ON_ACCENT,
+                                  font=ctk_theme.font(10, 'bold'))
+                else:
+                    btn.configure(fg_color=ACCENT_SOFT, text_color=TEXT,
+                                  font=ctk_theme.font(10, 'normal'))
+        if hasattr(self, '_ctx_quick_nav'):
+            for i, btn in self._ctx_quick_nav:
+                if i == current:
+                    btn.configure(fg_color=ACCENT, text_color=ON_ACCENT,
+                                  font=ctk_theme.font(10, 'bold'))
+                else:
+                    btn.configure(fg_color=ACCENT_SOFT, text_color=TEXT,
+                                  font=ctk_theme.font(10, 'normal'))
         self._update_context_panel()
         self._lazy_load_tab(current)
 
@@ -1231,6 +1335,7 @@ class StartupManagerGUI(ctk.CTk):
 
         cards = ttk.Frame(self.optimizer_tab, style='Content.TFrame')
         cards.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 6))
+        self._home_cards = cards
         for col in range(4):
             cards.grid_columnconfigure(col, weight=1)
 
@@ -1258,6 +1363,7 @@ class StartupManagerGUI(ctk.CTk):
 
         recent = ttk.Frame(self.optimizer_tab, style='Content.TFrame')
         recent.grid(row=2, column=0, sticky='ew', padx=10, pady=(0, 6))
+        self._home_recent = recent
         ttk.Label(recent, text='Recent proof', font=('Segoe UI', 11, 'bold'),
                   background=BG).pack(anchor='w', pady=(0, 4))
         recent_row = ttk.Frame(recent, style='Content.TFrame')
@@ -1277,6 +1383,7 @@ class StartupManagerGUI(ctk.CTk):
 
         fs_card = ctk_theme.frame(self.optimizer_tab, CARD_BG, corner_radius=10)
         fs_card.grid(row=3, column=0, sticky='ew', padx=10, pady=(0, 6))
+        self._home_fs = fs_card
         fs_inner = ttk.Frame(fs_card, style='Card.TFrame')
         fs_inner.pack(fill='x', padx=12, pady=8)
         ttk.Label(fs_inner, text='Disk foresight', font=('Segoe UI', 9, 'bold'),
@@ -1291,6 +1398,7 @@ class StartupManagerGUI(ctk.CTk):
 
         rec_card = ttk.Frame(self.optimizer_tab, style='Card.TFrame')
         rec_card.grid(row=4, column=0, sticky='nsew', padx=10, pady=(0, 8))
+        self._home_rec = rec_card
         rec_card.grid_rowconfigure(1, weight=1)
         rec_card.grid_columnconfigure(0, weight=1)
         ttk.Label(rec_card, text='Recommendations', font=('Segoe UI', 11, 'bold'),
@@ -2627,8 +2735,9 @@ class StartupManagerGUI(ctk.CTk):
         ttk.Button(bar, text='Refresh', style='Action.TButton',
                    command=self.refresh_uninstaller).pack(side='left', padx=6)
         self.uninst_quiet_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bar, text='Silent uninstall when possible',
-                        variable=self.uninst_quiet_var).pack(side='left', padx=6)
+        self._uninst_quiet_cb = ttk.Checkbutton(bar, text='Silent uninstall when possible',
+                        variable=self.uninst_quiet_var)
+        self._uninst_quiet_cb.pack(side='left', padx=6)
         self.uninst_leftover_btn = ttk.Button(bar, text='Scan Leftovers…', style='Action.TButton',
                                               command=self.scan_leftovers_for_selected)
         self.uninst_leftover_btn.pack(side='right')
