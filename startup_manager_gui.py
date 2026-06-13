@@ -118,6 +118,16 @@ except Exception:
     ledger_module = None
 
 try:
+    import shell_context_menu as shell_menu_module
+except Exception:
+    shell_menu_module = None
+
+try:
+    import shell_actions as shell_actions_module
+except Exception:
+    shell_actions_module = None
+
+try:
     import audit as audit_module
 except Exception:
     audit_module = None
@@ -284,7 +294,7 @@ SEARCH_PLACEHOLDER = 'Search startup items...  (Ctrl+F)'
 class StartupManagerGUI(ctk.CTk):
     """Cleanroom GUI: Review, Activity, Startup, Cleaner, Uninstaller, Restore."""
 
-    def __init__(self, config_path=None, restore_log_path=None):
+    def __init__(self, config_path=None, restore_log_path=None, initial_tab=None):
         ctk_theme.sync_appearance(CURRENT_THEME)
         super().__init__()
         self.title(brand.APP_DISPLAY)
@@ -336,6 +346,9 @@ class StartupManagerGUI(ctk.CTk):
         self._launch_done = False
         self._launch_logo = None
         self._tray = None
+        self._initial_tab = initial_tab
+        self._archive_context_menu = None
+        self._restore_context_menu = None
         self.protocol('WM_DELETE_WINDOW', self._on_window_close)
         self.after(50, self._poll_bg_queue)
 
@@ -370,6 +383,16 @@ class StartupManagerGUI(ctk.CTk):
             min_ms=1100,
         )
 
+    def _apply_initial_tab(self):
+        tab = getattr(self, '_initial_tab', None)
+        if tab == 'archive':
+            self.open_archive_browser_tab()
+        elif tab == 'restore':
+            self.tab_control.select(self.restore_tab)
+            self.refresh_restore()
+        elif tab == 'settings':
+            self.tab_control.select(self.settings_tab)
+
     def _finish_launch_sequence(self):
         if self._launch_done:
             return
@@ -394,6 +417,7 @@ class StartupManagerGUI(ctk.CTk):
             self._run_bg(foresight.record_snapshot,
                          lambda result, err: self.refresh_foresight())
         self._init_tray()
+        self._apply_initial_tab()
 
     def _init_tray(self):
         try:
@@ -620,6 +644,7 @@ class StartupManagerGUI(ctk.CTk):
         self.cleanup_tab = ttk.Frame(self.tab_control, style='Content.TFrame')
         self.uninstall_tab = ttk.Frame(self.tab_control, style='Content.TFrame')
         self.restore_tab = ttk.Frame(self.tab_control, style='Content.TFrame')
+        self.archive_tab = ttk.Frame(self.tab_control, style='Content.TFrame')
         self.settings_tab = ttk.Frame(self.tab_control, style='Content.TFrame')
         self.tab_control.add(self.optimizer_tab, text='  📋 Review  ')
         self.tab_control.add(self.activity_tab, text='  📋 Activity  ')
@@ -627,6 +652,7 @@ class StartupManagerGUI(ctk.CTk):
         self.tab_control.add(self.cleanup_tab, text='  🧹 Cleaner  ')
         self.tab_control.add(self.uninstall_tab, text='  🗑 Uninstaller  ')
         self.tab_control.add(self.restore_tab, text='  ↩ Restore  ')
+        self.tab_control.add(self.archive_tab, text='  🗂️ Archive  ')
         self.tab_control.add(self.settings_tab, text='  ⚙ Settings  ')
 
         self._build_optimizer_tab()
@@ -635,6 +661,7 @@ class StartupManagerGUI(ctk.CTk):
         self._build_cleaner_tab()
         self._build_uninstaller_tab()
         self._build_restore_tab()
+        self._build_archive_tab()
         self._build_settings_tab()
         self._build_statusbar()
         self.tab_control.bind('<<NotebookTabChanged>>', self._sync_nav_buttons)
@@ -850,6 +877,15 @@ class StartupManagerGUI(ctk.CTk):
                 nxt = advice['need']
             else:
                 nxt = 'Select a program — read the summary panel, then Uninstall or Force Remove.'
+        elif tab_idx == 6:
+            stats = getattr(self, '_archive_stats', {}) or {}
+            subtitle = (f'· {stats.get("total", 0)} in custody · '
+                        f'{stats.get("safe_count", 0)} safe to delete')
+            if stats.get('safe_count', 0):
+                nxt = (f'{stats["safe_count"]} item(s) marked Safe to delete — '
+                       'review the list, then Delete from Archive.')
+            else:
+                nxt = 'Select items or use Delete Older Than… to reclaim archive disk space.'
         elif tab_idx == 0:
             count = len(getattr(self, 'cleanup_items', []) or [])
             if count:
@@ -894,10 +930,11 @@ class StartupManagerGUI(ctk.CTk):
             'Scan folders and archive reviewed files to custody.',
             'Uninstall programs and archive leftovers.',
             'Restore archived files from the cleanup log.',
+            'Archive custody — browse, delete, and reclaim disk space.',
             'Scan paths, ages, archive folder, quick toggles.',
         )
         for idx, label in enumerate(('📋  Review', '📊  Activity', '🚀  Startup', '🧹  Cleaner',
-                                     '🗑  Uninstaller', '↩  Restore', '⚙  Settings')):
+                                     '🗑  Uninstaller', '↩  Restore', '🗂️  Archive', '⚙  Settings')):
             btn = ctk_theme.button(
                 sidebar, label, lambda i=idx: self._navigate_to_tab(i),
                 fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
@@ -915,8 +952,8 @@ class StartupManagerGUI(ctk.CTk):
              'Find registry entries pointing at missing files. Archive-first.'),
             ('🕐  Cleanroom Rewind', self.open_time_machine,
              'Roll back whole days of Cleanroom actions.'),
-            ('🗂️  Archive Browser', self.open_archive_browser_tab,
-             'Browse archived custody with local prune recommendations.'),
+            ('🗂️  Open Archive Tab', self.open_archive_browser_tab,
+             'Browse archive custody — restore, open, or delete archived copies.'),
             ('🧾  Cleanroom Receipt', self.open_last_receipt,
              'View the receipt from your most recent cleanup in-app.'),
             ('🔬  Custody Check', self.verify_custody,
@@ -927,6 +964,8 @@ class StartupManagerGUI(ctk.CTk):
              'Cleanroom has ever done on this PC.'),
             ('⏰  Schedule', self.schedule_optimization,
              'Schedule recurring cleanup via Task Scheduler.'),
+            ('🖱  Explorer Context Menus', self.open_shell_context_menu_tool,
+             'Add Cleanroom actions to Windows right-click menus in File Explorer.'),
         ]
         for label, cmd, tip in tools:
             btn = ctk_theme.button(
@@ -939,7 +978,7 @@ class StartupManagerGUI(ctk.CTk):
         sep2.pack(fill='x', pady=10, padx=10)
         ctk_theme.label(sidebar, 'Shortcuts', text_color=TEXT, font_size=12, weight='bold').pack(
             anchor='w', padx=12, pady=(0, 4))
-        for txt in ('F5  Refresh all', 'Ctrl+F  Search startup', 'Ctrl+1..7  Switch tab'):
+        for txt in ('F5  Refresh all', 'Ctrl+F  Search startup', 'Ctrl+1..8  Switch tab'):
             ctk_theme.label(sidebar, txt, text_color=MUTED, font_size=10).pack(
                 anchor='w', padx=14, pady=1)
 
@@ -1025,7 +1064,7 @@ class StartupManagerGUI(ctk.CTk):
         self.telemetry_btn = ttk.Button(actions, text='Telemetry', style='Action.TButton',
                                         command=self._show_telemetry_dialog)
         self.telemetry_btn.pack(side='left', padx=6)
-        self.prune_btn = ttk.Button(actions, text='Archive Prune Recommendations…', style='Action.TButton',
+        self.prune_btn = ttk.Button(actions, text='Delete from Archive…', style='Action.TButton',
                                     command=self.open_archive_browser_tab)
         self.prune_btn.pack(side='left', padx=6)
         self.receipt_btn = ttk.Button(actions, text='Cleanroom Receipt', style='Action.TButton',
@@ -1041,8 +1080,8 @@ class StartupManagerGUI(ctk.CTk):
                           '(dead startup refs, broken App Paths, orphaned uninstallers).\n'
                           'Repairs are exported to .reg backups first — fully restorable.')
         self._add_tooltip(self.prune_btn,
-                          'Archive Prune Recommendations — permanently remove selected files\n'
-                          'from Cleanroom\'s archive custody only. Original live files are not touched.')
+                          'Open Archive Browser to permanently delete archived copies.\n'
+                          'Original live files are not touched. Filter by Safe to delete for recommendations.')
         self._add_tooltip(self.preview_receipt_btn, 'See what the receipt will record before archiving.')
         self._add_tooltip(self.schedule_btn, 'Schedule recurring cleanup runs via Task Scheduler.')
         self._add_tooltip(self.open_archive_btn, 'Open the configured archive folder in Explorer.')
@@ -1137,17 +1176,14 @@ class StartupManagerGUI(ctk.CTk):
                    command=self.verify_custody).pack(side='left', padx=6)
         ttk.Button(bar, text='Proof Pack (HTML)', style='Primary.TButton',
                    command=self.export_audit).pack(side='left', padx=6)
-        ttk.Button(bar, text='Archive Browser', style='Action.TButton',
+        ttk.Button(bar, text='Open Archive Tab', style='Action.TButton',
                    command=self.open_archive_browser_tab).pack(side='left', padx=6)
         ttk.Label(bar, text='Every row is a real archived artifact — ✓ means it\'s still on disk.',
                   style='Info.TLabel').pack(side='left', padx=(12, 0))
 
-        self.act_sub_notebook = ttk.Notebook(self.activity_tab)
-        self.act_sub_notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
-
-        ledger_panel = ttk.Frame(self.act_sub_notebook, style='Card.TFrame')
-        self.act_sub_notebook.add(ledger_panel, text='  Activity Ledger  ')
-        wrap = ledger_panel
+        self.act_sub_notebook = None
+        wrap = ttk.Frame(self.activity_tab, style='Card.TFrame')
+        wrap.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         cols = ('status', 'when', 'reason', 'source', 'size')
         self.activity_tree = ttk.Treeview(wrap, columns=cols, show='headings', selectmode='browse')
         for c, label, w in (('status', '', 36), ('when', 'When', 140), ('reason', 'Reason', 130),
@@ -1165,48 +1201,81 @@ class StartupManagerGUI(ctk.CTk):
             self.activity_tree, 'No Cleanroom actions logged yet.\n'
                                 'Run a cleanup — every move will appear here with proof status.')
         self._activity_feed = []
-        self._build_archive_browser_panel()
 
-    def _build_archive_browser_panel(self):
-        """In-app archive custody browser with local prune recommendations."""
-        panel = ttk.Frame(self.act_sub_notebook, style='Card.TFrame')
-        self.act_sub_notebook.add(panel, text='  Archive Browser  ')
+    def _build_archive_tab(self):
+        """Dedicated archive custody manager — browse, restore, delete."""
+        header = ttk.Frame(self.archive_tab, style='Content.TFrame')
+        header.pack(fill='x', padx=10, pady=(10, 6))
+        ttk.Label(header, text='Archive Custody', style='Header.TLabel').pack(anchor='w')
+        ttk.Label(
+            header,
+            text='Everything Cleanroom archived is listed here. Delete removes the archived copy only — '
+                 'original live files are never touched.',
+            style='SubHeader.TLabel', wraplength=920,
+        ).pack(anchor='w', pady=(4, 0))
 
-        head = ttk.Frame(panel, style='Content.TFrame')
-        head.pack(fill='x', padx=8, pady=(8, 4))
-        ttk.Label(head, text='Archive Browser', font=('Segoe UI', 12, 'bold'),
-                  background=BG).pack(side='left')
-        ttk.Label(head, text='Archive Prune Recommendations — archive custody only',
-                  style='Info.TLabel').pack(side='left', padx=(10, 0))
+        stats_row = ttk.Frame(self.archive_tab, style='Content.TFrame')
+        stats_row.pack(fill='x', padx=10, pady=(0, 8))
+        self.stat_arch_total = self._stat_card(stats_row, 'Items in custody')
+        self.stat_arch_safe = self._stat_card(stats_row, 'Safe to delete')
+        self.stat_arch_bytes = self._stat_card(stats_row, 'Archive size')
+        self.stat_arch_selected = self._stat_card(stats_row, 'Selected')
 
-        chip_row = ttk.Frame(panel, style='Content.TFrame')
-        chip_row.pack(fill='x', padx=8, pady=(0, 6))
+        toolbar = ctk_theme.frame(self.archive_tab, CARD_BG, corner_radius=10)
+        toolbar.pack(fill='x', padx=10, pady=(0, 8))
+        tool_inner = ctk_theme.frame(toolbar, CARD_BG)
+        tool_inner.pack(fill='x', padx=12, pady=10)
+
+        filter_frame = ttk.Frame(tool_inner, style='Card.TFrame')
+        filter_frame.pack(fill='x')
         self._archive_prune_filter = tk.StringVar(value='')
-        for label, value in (
-            ('All', ''), ('Safe to prune', archive_custody.PRUNE_SAFE if archive_custody else ''),
+        chip_labels = (
+            ('All', ''), ('Safe to delete', archive_custody.PRUNE_SAFE if archive_custody else ''),
             ('Review first', archive_custody.PRUNE_REVIEW if archive_custody else ''),
             ('Keep in custody', archive_custody.PRUNE_KEEP if archive_custody else ''),
-        ):
-            ttk.Radiobutton(chip_row, text=label, value=value, variable=self._archive_prune_filter,
-                            command=self.refresh_archive_browser).pack(side='left', padx=(0, 8))
+        )
+        for label, value in chip_labels:
+            ttk.Radiobutton(filter_frame, text=label, value=value,
+                            variable=self._archive_prune_filter,
+                            command=self._apply_archive_view_filters).pack(side='left', padx=(0, 10))
 
-        tree_wrap = ttk.Frame(panel)
-        tree_wrap.pack(fill='both', expand=True, padx=8, pady=(0, 6))
+        search_row = ttk.Frame(tool_inner, style='Card.TFrame')
+        search_row.pack(fill='x', pady=(8, 0))
+        ttk.Label(search_row, text='Search:', style='CardInfo.TLabel').pack(side='left')
+        self._archive_search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_row, textvariable=self._archive_search_var,
+                                 width=36, style='Search.TEntry')
+        search_entry.pack(side='left', padx=(6, 0))
+        search_entry.bind('<Return>', lambda e: self._apply_archive_view_filters())
+        ttk.Button(search_row, text='Search', style='Action.TButton',
+                   command=self._apply_archive_view_filters).pack(side='left', padx=(6, 0))
+        ttk.Button(search_row, text='Refresh', style='Action.TButton',
+                   command=self.refresh_archive_browser).pack(side='left', padx=(6, 0))
+        ttk.Button(search_row, text='Open Archive Folder', style='Action.TButton',
+                   command=self.open_archive_folder).pack(side='right')
+
+        body = ttk.Frame(self.archive_tab, style='Content.TFrame')
+        body.pack(fill='both', expand=True, padx=10, pady=(0, 8))
+
+        tree_card = ttk.Labelframe(body, text='Archived items', style='Detail.TLabelframe')
+        tree_card.pack(side='left', fill='both', expand=True, padx=(0, 8))
+        tree_wrap = ttk.Frame(tree_card)
+        tree_wrap.pack(fill='both', expand=True, padx=6, pady=6)
         acols = ('when', 'src', 'dest', 'reason', 'size', 'restorable', 'receipt', 'prune_rank')
         self.archive_tree = ttk.Treeview(tree_wrap, columns=acols, show='headings',
-                                         selectmode='extended')
+                                         selectmode='extended', height=14)
         headings = {
-            'when': 'Archived date', 'src': 'Original path', 'dest': 'Archive path',
-            'reason': 'Reason', 'size': 'Size', 'restorable': 'Restorable',
-            'receipt': 'Receipt', 'prune_rank': 'Prune rank',
+            'when': 'Archived', 'src': 'Original path', 'dest': 'Archive path',
+            'reason': 'Reason', 'size': 'Size', 'restorable': 'On disk',
+            'receipt': 'Receipt', 'prune_rank': 'Recommendation',
         }
-        widths = {'when': 130, 'src': 220, 'dest': 220, 'reason': 100, 'size': 72,
-                  'restorable': 72, 'receipt': 56, 'prune_rank': 110}
+        widths = {'when': 120, 'src': 200, 'dest': 200, 'reason': 90, 'size': 68,
+                  'restorable': 56, 'receipt': 52, 'prune_rank': 108}
         for c in acols:
             self.archive_tree.heading(c, text=headings[c])
             anchor = 'center' if c in ('size', 'restorable', 'receipt', 'prune_rank') else 'w'
-            stretch = c in ('src', 'dest')
-            self.archive_tree.column(c, width=widths[c], anchor=anchor, stretch=stretch)
+            self.archive_tree.column(c, width=widths[c], anchor=anchor,
+                                     stretch=c in ('src', 'dest'))
         vsb = ttk.Scrollbar(tree_wrap, orient='vertical', command=self.archive_tree.yview)
         hsb = ttk.Scrollbar(tree_wrap, orient='horizontal', command=self.archive_tree.xview)
         self.archive_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -1220,24 +1289,73 @@ class StartupManagerGUI(ctk.CTk):
         self.archive_tree.tag_configure('keep', foreground=MUTED)
         self.archive_empty = self._make_empty_hint(
             self.archive_tree, 'No archive custody records yet.\n'
-                                'Archive files with Cleaner — evidence appears here.')
+                                'Run Cleaner → Archive & Clean — evidence appears here.')
+        self.archive_tree.bind('<<TreeviewSelect>>', lambda e: self._on_archive_select())
+        self.archive_tree.bind('<Button-3>', self._on_archive_right_click)
+        self._archive_records_all = []
         self._archive_records = []
+        self._archive_stats = {}
 
-        actions = ttk.Frame(panel, style='Content.TFrame')
-        actions.pack(fill='x', padx=8, pady=(0, 8))
-        for txt, cmd in (
-            ('Restore Selected', self._archive_restore_selected),
-            ('Open Original Location', self._archive_open_original),
-            ('Open Archive Location', self._archive_open_archive),
-            ('Open Receipt', self._archive_open_receipt),
-            ('Copy Path', self._archive_copy_path),
-        ):
-            ttk.Button(actions, text=txt, style='Action.TButton', command=cmd).pack(side='left', padx=(0, 4))
-        ttk.Button(actions, text='Prune Selected from Archive', style='Primary.TButton',
-                   command=self.confirm_prune_selected).pack(side='right')
-        self.archive_status_lbl = ttk.Label(panel, text='', style='Info.TLabel')
-        self.archive_status_lbl.pack(anchor='w', padx=10, pady=(0, 8))
+        detail = ttk.Labelframe(body, text='Selection', style='Detail.TLabelframe')
+        detail.pack(side='left', fill='y')
+        detail.configure(width=320)
+        detail.pack_propagate(False)
+        self._archive_detail_src = ttk.Label(detail, text='Original: —', style='CardInfo.TLabel',
+                                             wraplength=280, justify='left')
+        self._archive_detail_dest = ttk.Label(detail, text='Archive: —', style='CardInfo.TLabel',
+                                              wraplength=280, justify='left')
+        self._archive_detail_meta = ttk.Label(detail, text='', style='CardInfo.TLabel',
+                                              wraplength=280, justify='left')
+        self._archive_detail_rank = ttk.Label(detail, text='Recommendation: —', style='CardInfo.TLabel',
+                                              wraplength=280, justify='left')
+        for lbl in (self._archive_detail_src, self._archive_detail_dest,
+                    self._archive_detail_meta, self._archive_detail_rank):
+            lbl.pack(anchor='w', padx=10, pady=(8, 2))
 
+        detail_btns = ttk.Frame(detail, style='Card.TFrame')
+        detail_btns.pack(fill='x', padx=10, pady=(8, 4))
+        ttk.Button(detail_btns, text='Restore', style='Action.TButton',
+                   command=self._archive_restore_selected).pack(fill='x', pady=2)
+        ttk.Button(detail_btns, text='Open Archive Location', style='Action.TButton',
+                   command=self._archive_open_archive).pack(fill='x', pady=2)
+        ttk.Button(detail_btns, text='Open Original Location', style='Action.TButton',
+                   command=self._archive_open_original).pack(fill='x', pady=2)
+        ttk.Button(detail_btns, text='Open Receipt', style='Action.TButton',
+                   command=self._archive_open_receipt).pack(fill='x', pady=2)
+
+        ttk.Button(detail_btns, text='Copy Archive Path', style='Action.TButton',
+                   command=self._archive_copy_path).pack(fill='x', pady=2)
+
+        footer = ctk_theme.frame(self.archive_tab, CARD_BG, corner_radius=10)
+        footer.pack(fill='x', padx=10, pady=(0, 10))
+        foot_inner = ttk.Frame(footer, style='Card.TFrame')
+        foot_inner.pack(fill='x', padx=12, pady=10)
+
+        left_actions = ttk.Frame(foot_inner, style='Card.TFrame')
+        left_actions.pack(side='left')
+        ttk.Button(left_actions, text='Select All Safe', style='Action.TButton',
+                   command=self._archive_select_all_safe).pack(side='left', padx=(0, 6))
+        ttk.Button(left_actions, text='Clear Selection', style='Action.TButton',
+                   command=lambda: self.archive_tree.selection_remove(
+                       self.archive_tree.selection())).pack(side='left', padx=(0, 6))
+        ttk.Button(left_actions, text='Archive Settings…', style='Action.TButton',
+                   command=self._open_archive_settings).pack(side='left')
+
+        right_actions = ttk.Frame(foot_inner, style='Card.TFrame')
+        right_actions.pack(side='right')
+        ttk.Button(right_actions, text='Delete Older Than…', style='Action.TButton',
+                   command=self.confirm_delete_older_than).pack(side='left', padx=(0, 6))
+        ttk.Button(right_actions, text='Delete All Safe', style='Action.TButton',
+                   command=self.confirm_delete_all_safe).pack(side='left', padx=(0, 6))
+        self.delete_archive_btn = ttk.Button(
+            right_actions, text='Delete Selected from Archive', style='Primary.TButton',
+            command=self.confirm_prune_selected)
+        self.delete_archive_btn.pack(side='left')
+        self._add_tooltip(self.delete_archive_btn,
+                          'Permanently delete selected archived copies. Original live files untouched.')
+
+        self.archive_status_lbl = ttk.Label(self.archive_tab, text='', style='Info.TLabel')
+        self.archive_status_lbl.pack(anchor='w', padx=12, pady=(0, 4))
     def _stat_card(self, parent, caption):
         """White stat card with a big value label; returns the value label."""
         card = tk.Frame(parent, bg=CARD_BG, highlightbackground=BORDER, highlightthickness=1)
@@ -1730,8 +1848,15 @@ class StartupManagerGUI(ctk.CTk):
         self.time_machine_btn = ttk.Button(btn_row, text='🕐 Cleanroom Rewind', style='Action.TButton',
                                            command=self.open_time_machine)
         self.time_machine_btn.pack(side='left', padx=6)
+        self.delete_restore_archive_btn = ttk.Button(
+            btn_row, text='Delete from Archive…', style='Action.TButton',
+            command=self.confirm_delete_restore_selected)
+        self.delete_restore_archive_btn.pack(side='left', padx=6)
         self._add_tooltip(self.time_machine_btn,
                           'See every cleanup day at a glance and roll a whole day back.')
+        self._add_tooltip(self.delete_restore_archive_btn,
+                          'Permanently delete the archived copy of the selected item.\n'
+                          'Original live files are not touched.')
         filter_row = ttk.Frame(controls, style='Content.TFrame')
         filter_row.pack(fill='x', pady=(6, 0))
         self.restore_filter_var = tk.StringVar()
@@ -1794,6 +1919,12 @@ class StartupManagerGUI(ctk.CTk):
         self.open_archived_btn = ttk.Button(detail_actions, text='Open Archived', style='Action.TButton',
                                             command=self._open_archived_selected)
         self.open_archived_btn.pack(side='left', padx=6)
+        self.delete_restore_detail_btn = ttk.Button(
+            detail_actions, text='Delete from Archive…', style='Action.TButton',
+            command=self.confirm_delete_restore_selected)
+        self.delete_restore_detail_btn.pack(side='left', padx=6)
+        self._add_tooltip(self.delete_restore_detail_btn,
+                          'Permanently delete this archived copy. Original live files are not touched.')
 
         preview_box = ttk.Labelframe(right, text='File preview', style='Detail.TLabelframe')
         preview_box.pack(fill='both', expand=True, padx=8, pady=(0, 8))
@@ -1806,6 +1937,7 @@ class StartupManagerGUI(ctk.CTk):
 
         self.restore_tree.bind('<<TreeviewSelect>>', lambda e: self._on_restore_select())
         self.restore_tree.bind('<Return>', lambda e: self.restore_selected_entry())
+        self.restore_tree.bind('<Button-3>', self._on_restore_right_click)
 
         status = ttk.Frame(self.restore_tab)
         status.pack(fill='x', padx=10, pady=(0, 10))
@@ -1878,6 +2010,40 @@ class StartupManagerGUI(ctk.CTk):
         _quick_switch(1, 1, 'Deduplicate before archive', self.set_dedupe_default)
         self.set_power_var = tk.BooleanVar(value=bool(load_ui_prefs().get('power_user')))
         _quick_switch(2, 0, 'Power user mode (dense lists)', self.set_power_var)
+
+        archive_box = ctk_theme.frame(self.settings_tab, CARD_BG, corner_radius=10)
+        archive_box.pack(fill='x', padx=10, pady=(0, 10))
+        ctk_theme.label(
+            archive_box, 'Archive custody & delete', text_color=ACCENT, font_size=13, weight='bold',
+        ).pack(anchor='w', padx=14, pady=(12, 4))
+        ctk_theme.label(
+            archive_box,
+            'Control when archived copies become safe to delete. Deleting from archive removes '
+            'the archived copy only — original live files are never touched.',
+            text_color=MUTED, font_size=10, wraplength=920, justify='left',
+        ).pack(anchor='w', padx=14, pady=(0, 8))
+        archive_grid = ctk_theme.frame(archive_box, CARD_BG)
+        archive_grid.pack(fill='x', padx=14, pady=(0, 8))
+        self.set_prune_recent_days = tk.IntVar(value=7)
+        ttk.Label(archive_grid, text='Protect archive items newer than (days):',
+                  style='CardInfo.TLabel').grid(row=0, column=0, sticky='w', pady=3)
+        ttk.Spinbox(archive_grid, from_=0, to=365, textvariable=self.set_prune_recent_days,
+                    width=10).grid(row=0, column=1, sticky='w', pady=3, padx=(8, 0))
+        ttk.Label(archive_grid, text='(0 = no protection — all items eligible for delete recommendations)',
+                  style='Info.TLabel').grid(row=0, column=2, sticky='w', padx=(8, 0), pady=3)
+        ttk.Label(
+            archive_grid,
+            text='Delete recommendations use temp/installer age thresholds above plus local custody rules.',
+            style='Info.TLabel',
+        ).grid(row=1, column=0, columnspan=3, sticky='w', pady=(4, 0))
+        archive_btns = ttk.Frame(archive_box, style='Card.TFrame')
+        archive_btns.pack(fill='x', padx=14, pady=(0, 12))
+        ttk.Button(archive_btns, text='Open Archive Browser…', style='Action.TButton',
+                   command=self.open_archive_browser_tab).pack(side='left')
+        ttk.Button(archive_btns, text='Show Safe to Delete…', style='Action.TButton',
+                   command=self.prune_archive_dialog).pack(side='left', padx=(8, 0))
+        ttk.Button(archive_btns, text='Explorer Context Menus…', style='Action.TButton',
+                   command=self.open_shell_context_menu_tool).pack(side='left', padx=(8, 0))
 
         body = ttk.Frame(self.settings_tab, style='Content.TFrame')
         body.pack(fill='both', expand=True, padx=10)
@@ -2057,6 +2223,7 @@ class StartupManagerGUI(ctk.CTk):
         self.set_exclude_text.insert('1.0', '\n'.join(cfg.get('exclude_patterns', []) or []))
         self.set_whitelist_text.delete('1.0', 'end')
         self.set_whitelist_text.insert('1.0', '\n'.join(cfg.get('whitelist', []) or []))
+        self.set_prune_recent_days.set(int(cfg.get('prune_recent_days', 7)))
         self.settings_status_lbl.config(text=self._config_status_label())
 
     def save_settings(self):
@@ -2080,6 +2247,7 @@ class StartupManagerGUI(ctk.CTk):
             'extensions_archive': exts,
             'exclude_patterns': [l.strip() for l in self.set_exclude_text.get('1.0', 'end').splitlines() if l.strip()],
             'whitelist': [l.strip() for l in self.set_whitelist_text.get('1.0', 'end').splitlines() if l.strip()],
+            'prune_recent_days': int(self.set_prune_recent_days.get()),
         })
         self.dedupe_enabled.set(bool(self.set_dedupe_default.get()))
         try:
@@ -2877,7 +3045,7 @@ class StartupManagerGUI(ctk.CTk):
         self.bind('<F5>', lambda e: self._refresh_all())
         self.bind('<Control-f>', lambda e: self._focus_search())
         self.bind('<Control-F>', lambda e: self._focus_search())
-        for i in range(7):
+        for i in range(8):
             self.bind(f'<Control-Key-{i + 1}>', lambda e, idx=i: self.tab_control.select(idx))
 
     def _refresh_all(self):
@@ -2885,6 +3053,7 @@ class StartupManagerGUI(ctk.CTk):
         self.refresh_cleanup()
         self.refresh_restore()
         self.refresh_activity()
+        self.refresh_archive_browser()
 
     def _focus_search(self):
         self.tab_control.select(self.startup_tab)  # search lives on the Startup tab
@@ -3332,9 +3501,7 @@ class StartupManagerGUI(ctk.CTk):
         self.refresh_archive_browser()
 
     def open_archive_browser_tab(self):
-        self.tab_control.select(self.activity_tab)
-        if hasattr(self, 'act_sub_notebook'):
-            self.act_sub_notebook.select(1)
+        self.tab_control.select(self.archive_tab)
         self.refresh_archive_browser()
 
     def refresh_archive_browser(self):
@@ -3348,11 +3515,34 @@ class StartupManagerGUI(ctk.CTk):
                 actions = []
         cfg = self._load_cleanup_config() or {}
         receipt_dir = brand.user_data_dir() / 'receipts'
-        records = archive_custody.build_archive_records(actions, receipt_dir=receipt_dir, config=cfg)
+        self._archive_records_all = archive_custody.build_archive_records(
+            actions, receipt_dir=receipt_dir, config=cfg)
+        self._archive_stats = archive_custody.summarize_archive_records(self._archive_records_all)
+        self._update_archive_stat_cards()
+        self._apply_archive_view_filters()
+        self._update_context_panel()
+
+    def _update_archive_stat_cards(self):
+        stats = getattr(self, '_archive_stats', {}) or {}
+        if hasattr(self, 'stat_arch_total'):
+            self.stat_arch_total.config(text=str(stats.get('total', 0)))
+            self.stat_arch_safe.config(text=str(stats.get('safe_count', 0)))
+            self.stat_arch_bytes.config(text=self._format_size(stats.get('bytes_total', 0)))
+        sel = len(self.archive_tree.selection()) if hasattr(self, 'archive_tree') else 0
+        if hasattr(self, 'stat_arch_selected'):
+            self.stat_arch_selected.config(text=str(sel))
+
+    def _apply_archive_view_filters(self):
+        if archive_custody is None or not hasattr(self, 'archive_tree'):
+            return
+        records = list(getattr(self, '_archive_records_all', []) or [])
         rank_filter = getattr(self, '_archive_prune_filter', None)
         filt = rank_filter.get() if rank_filter else ''
         if filt:
             records = archive_custody.filter_by_prune_rank(records, filt)
+        search_var = getattr(self, '_archive_search_var', None)
+        if search_var:
+            records = archive_custody.filter_by_search(records, search_var.get())
         self._archive_records = records
 
         tree = self.archive_tree
@@ -3382,8 +3572,105 @@ class StartupManagerGUI(ctk.CTk):
         else:
             self.archive_empty.place(relx=0.5, rely=0.4, anchor='center')
         safe_n = sum(1 for r in records if r.get('prune_rank') == archive_custody.PRUNE_SAFE)
+        total_all = len(getattr(self, '_archive_records_all', []) or [])
         self.archive_status_lbl.config(
-            text=f'{len(records)} archive record(s) · {safe_n} marked Safe to prune (local rules only)')
+            text=f'Showing {len(records)} of {total_all} archive record(s) · '
+                 f'{safe_n} safe to delete in this view')
+        self._update_archive_stat_cards()
+        self._on_archive_select()
+
+    def _on_archive_select(self):
+        if not hasattr(self, '_archive_detail_src'):
+            return
+        recs = self._selected_archive_records()
+        self._update_archive_stat_cards()
+        if not recs:
+            self._archive_detail_src.config(text='Original: —')
+            self._archive_detail_dest.config(text='Archive: —')
+            self._archive_detail_meta.config(text='Select one or more items from the list.')
+            self._archive_detail_rank.config(text='Recommendation: —')
+            return
+        r = recs[0]
+        when = (r.get('when') or '')[:19].replace('T', ' ')
+        self._archive_detail_src.config(text=f'Original:\n{r.get("src", "—")}')
+        self._archive_detail_dest.config(text=f'Archive:\n{r.get("dest", "—")}')
+        extra = f'{len(recs)} selected · {self._format_size(sum(int(x.get("size") or 0) for x in recs))}'
+        if len(recs) == 1:
+            extra = f'{when} · {r.get("reason", "—")} · {self._format_size(r.get("size", 0))}'
+        self._archive_detail_meta.config(text=extra)
+        ranks = {x.get('prune_rank') for x in recs}
+        rank_txt = ranks.pop() if len(ranks) == 1 else 'Mixed recommendations'
+        self._archive_detail_rank.config(text=f'Recommendation: {rank_txt}')
+
+    def _archive_select_all_safe(self):
+        if archive_custody is None:
+            return
+        self.archive_tree.selection_set(())
+        for i, rec in enumerate(self._archive_records):
+            if rec.get('prune_rank') == archive_custody.PRUNE_SAFE:
+                self.archive_tree.selection_add(str(i))
+        self._on_archive_select()
+
+    def confirm_delete_all_safe(self):
+        if archive_custody is None:
+            return
+        recs = [r for r in getattr(self, '_archive_records_all', [])
+                if r.get('prune_rank') == archive_custody.PRUNE_SAFE and r.get('restorable')]
+        if not recs:
+            messagebox.showinfo('Delete from Archive', 'No items marked Safe to delete right now.')
+            return
+        freed = self._format_size(sum(int(r.get('size') or 0) for r in recs))
+        if not messagebox.askokcancel(
+                'Delete All Safe',
+                f'Delete {len(recs)} archived item(s) marked Safe to delete ({freed})?\n\n'
+                'Original live files are not touched. This cannot be undone.'):
+            return
+        self._run_archive_delete(recs, context='archive')
+
+    def confirm_delete_older_than(self):
+        if archive_custody is None:
+            return
+        dlg = tk.Toplevel(self)
+        dlg.title('Delete Older Than')
+        dlg.transient(self)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill='both', expand=True)
+        ttk.Label(frm, text='Permanently delete archive copies older than:',
+                  style='Header.TLabel').pack(anchor='w')
+        days_var = tk.IntVar(value=90)
+        spin = ttk.Spinbox(frm, from_=1, to=3650, textvariable=days_var, width=8)
+        spin.pack(anchor='w', pady=(8, 4))
+        ttk.Label(frm, text='days (original live files are never touched)',
+                  style='Info.TLabel').pack(anchor='w')
+        preview_lbl = ttk.Label(frm, text='', style='CardInfo.TLabel', wraplength=360)
+        preview_lbl.pack(anchor='w', pady=(10, 4))
+
+        def refresh_preview(*_):
+            recs = archive_custody.filter_older_than_days(
+                getattr(self, '_archive_records_all', []) or [], days_var.get())
+            freed = self._format_size(sum(int(r.get('size') or 0) for r in recs))
+            preview_lbl.config(text=f'Preview: {len(recs)} item(s) · {freed}')
+
+        days_var.trace_add('write', refresh_preview)
+        refresh_preview()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill='x', pady=(12, 0))
+
+        def go():
+            recs = archive_custody.filter_older_than_days(
+                getattr(self, '_archive_records_all', []) or [], days_var.get())
+            dlg.destroy()
+            if not recs:
+                messagebox.showinfo('Delete from Archive', 'No matching archive items for that age.')
+                return
+            self._run_archive_delete(recs, context='archive')
+
+        ttk.Button(btns, text='Cancel', style='Action.TButton', command=dlg.destroy).pack(side='right')
+        ttk.Button(btns, text='Delete Matching Items', style='Primary.TButton', command=go).pack(
+            side='right', padx=(0, 8))
+        dlg.geometry('420x220')
 
     def _selected_archive_records(self):
         sel = self.archive_tree.selection()
@@ -3487,6 +3774,301 @@ class StartupManagerGUI(ctk.CTk):
         except tk.TclError:
             messagebox.showinfo('Copy Path', text)
 
+    def _tree_context_menu(self, parent):
+        return tk.Menu(
+            parent, tearoff=0,
+            bg=CARD_BG, fg=TEXT,
+            activebackground=ACCENT_SOFT, activeforeground=TEXT,
+            disabledforeground=MUTED, bd=1, relief='solid',
+            font=('Segoe UI', 10),
+        )
+
+    def _tree_right_click_select(self, tree, event):
+        iid = tree.identify_row(event.y)
+        if iid:
+            if iid not in tree.selection():
+                tree.selection_set(iid)
+        return iid
+
+    def _ensure_archive_context_menu(self):
+        if self._archive_context_menu is not None:
+            return
+        menu = self._tree_context_menu(self.archive_tree)
+        menu.add_command(label='Restore Selected', command=self._archive_restore_selected)
+        menu.add_command(label='Delete from Archive…', command=self.confirm_prune_selected)
+        menu.add_separator()
+        menu.add_command(label='Open Archive Location', command=self._archive_open_archive)
+        menu.add_command(label='Open Original Location', command=self._archive_open_original)
+        menu.add_command(label='Open Receipt', command=self._archive_open_receipt)
+        menu.add_separator()
+        menu.add_command(label='Copy archive path', command=self._archive_copy_path)
+        menu.add_command(label='Copy original path', command=self._archive_copy_original_path)
+        menu.add_separator()
+        menu.add_command(label='Select all safe to delete', command=self._archive_select_all_safe)
+        menu.add_command(label='Delete all safe…', command=self.confirm_delete_all_safe)
+        menu.add_command(label='Delete older than…', command=self.confirm_delete_older_than)
+        menu.add_separator()
+        menu.add_command(label='Refresh', command=self.refresh_archive_browser)
+        self._archive_context_menu = menu
+
+    def _on_archive_right_click(self, event):
+        iid = self._tree_right_click_select(self.archive_tree, event)
+        self._ensure_archive_context_menu()
+        menu = self._archive_context_menu
+        has_sel = bool(self._selected_archive_records())
+        for idx, enabled in (
+            (0, has_sel), (1, has_sel), (3, has_sel), (4, has_sel),
+            (5, has_sel), (7, has_sel), (8, has_sel), (10, True),
+            (11, True), (12, True), (14, True),
+        ):
+            menu.entryconfig(idx, state='normal' if enabled else 'disabled')
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return 'break'
+
+    def _archive_copy_original_path(self):
+        recs = self._selected_archive_records()
+        if not recs:
+            return
+        text = recs[0].get('src') or ''
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._set_status('Original path copied.')
+        except tk.TclError:
+            messagebox.showinfo('Copy Path', text)
+
+    def _ensure_restore_context_menu(self):
+        if self._restore_context_menu is not None:
+            return
+        menu = self._tree_context_menu(self.restore_tree)
+        menu.add_command(label='Restore Selected', command=self.restore_selected_entry)
+        menu.add_command(label='Restore Now', command=lambda: self.restore_selected_entry(apply=True))
+        menu.add_command(label='Delete from Archive…', command=self.confirm_delete_restore_selected)
+        menu.add_separator()
+        menu.add_command(label='Open Archived File', command=self._open_archived_selected)
+        menu.add_command(label='Open Archive Tab', command=self.open_archive_browser_tab)
+        menu.add_separator()
+        menu.add_command(label='Copy original path', command=self._restore_copy_original)
+        menu.add_command(label='Copy archive path', command=self._restore_copy_archive)
+        menu.add_separator()
+        menu.add_command(label='Reload log', command=self.refresh_restore)
+        self._restore_context_menu = menu
+
+    def _on_restore_right_click(self, event):
+        iid = self._tree_right_click_select(self.restore_tree, event)
+        self._ensure_restore_context_menu()
+        menu = self._restore_context_menu
+        has_sel = self._selected_restore_index() is not None
+        for idx, enabled in (
+            (0, has_sel), (1, has_sel), (2, has_sel), (4, has_sel),
+            (6, has_sel), (7, has_sel), (9, True),
+        ):
+            menu.entryconfig(idx, state='normal' if enabled else 'disabled')
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return 'break'
+
+    def _restore_copy_original(self):
+        idx = self._selected_restore_index()
+        if idx is None:
+            return
+        text = self.restore_entries[idx][0] or ''
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._set_status('Original path copied.')
+        except tk.TclError:
+            messagebox.showinfo('Copy Path', text)
+
+    def _restore_copy_archive(self):
+        idx = self._selected_restore_index()
+        if idx is None:
+            return
+        text = self.restore_entries[idx][1] or ''
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._set_status('Archive path copied.')
+        except tk.TclError:
+            messagebox.showinfo('Copy Path', text)
+
+    def _shell_exe_path(self):
+        return sys.executable if getattr(sys, 'frozen', False) else str(Path(__file__).resolve())
+
+    def open_shell_context_menu_tool(self):
+        """Build/install Windows Explorer right-click menus for Cleanroom."""
+        if shell_menu_module is None:
+            messagebox.showerror('Context Menus', 'Shell menu module unavailable.')
+            return
+        dlg = tk.Toplevel(self)
+        dlg.title('Explorer Context Menus')
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.configure(bg=BG)
+        frm = ttk.Frame(dlg, style='Content.TFrame', padding=12)
+        frm.pack(fill='both', expand=True)
+        ttk.Label(frm, text='Windows Explorer right-click menus',
+                  style='Header.TLabel').pack(anchor='w')
+        ttk.Label(
+            frm,
+            text='Install Cleanroom actions in File Explorer (per-user, HKCU). '
+                 'Use %1 in custom commands for the selected file/folder path.',
+            style='Info.TLabel', wraplength=520,
+        ).pack(anchor='w', pady=(4, 10))
+
+        cfg = shell_menu_module.load_config()
+        preset_vars = {}
+        presets_box = ttk.Labelframe(frm, text='Built-in menus', style='Detail.TLabelframe')
+        presets_box.pack(fill='x', pady=(0, 8))
+        for preset in shell_menu_module.PRESETS:
+            var = tk.BooleanVar(value=bool(cfg.get('presets', {}).get(preset['id'], preset['enabled_default'])))
+            preset_vars[preset['id']] = var
+            target_label = shell_menu_module.TARGETS.get(preset['target'], ('', ''))[0]
+            ttk.Checkbutton(
+                presets_box,
+                text=f'{preset["label"]}  ({target_label})',
+                variable=var,
+            ).pack(anchor='w', padx=8, pady=2)
+
+        custom_box = ttk.Labelframe(frm, text='Custom menus', style='Detail.TLabelframe')
+        custom_box.pack(fill='both', expand=True, pady=(0, 8))
+        custom_list = tk.Listbox(custom_box, height=5, font=('Segoe UI', 10),
+                                 bg=PREVIEW_BG, fg=TEXT, selectbackground=ACCENT,
+                                 selectforeground=ON_ACCENT)
+        custom_list.pack(fill='both', expand=True, padx=8, pady=(8, 4))
+
+        def refresh_custom_list():
+            custom_list.delete(0, 'end')
+            for item in cfg.get('custom') or []:
+                target_label = shell_menu_module.TARGETS.get(item.get('target', ''), ('?', ''))[0]
+                custom_list.insert('end', f'{item.get("label", "?")}  [{target_label}]')
+
+        refresh_custom_list()
+
+        custom_btns = ttk.Frame(custom_box, style='Card.TFrame')
+        custom_btns.pack(fill='x', padx=8, pady=(0, 8))
+
+        def add_custom():
+            sub = tk.Toplevel(dlg)
+            sub.title('Add custom menu')
+            sub.transient(dlg)
+            sub.grab_set()
+            body = ttk.Frame(sub, padding=10)
+            body.pack(fill='both', expand=True)
+            ttk.Label(body, text='Menu label:').grid(row=0, column=0, sticky='w', pady=3)
+            label_var = tk.StringVar(value='Cleanroom action')
+            ttk.Entry(body, textvariable=label_var, width=36).grid(row=0, column=1, sticky='we', pady=3)
+            ttk.Label(body, text='Right-click on:').grid(row=1, column=0, sticky='w', pady=3)
+            target_keys = list(shell_menu_module.TARGETS.keys())
+            target_labels = [shell_menu_module.TARGETS[k][0] for k in target_keys]
+            target_var = tk.StringVar(value=target_labels[0])
+            ttk.Combobox(
+                body, textvariable=target_var, state='readonly', width=34,
+                values=target_labels,
+            ).grid(row=1, column=1, sticky='we', pady=3)
+            ttk.Label(body, text='Action:').grid(row=2, column=0, sticky='w', pady=3)
+            action_keys = list(shell_menu_module.ACTION_TEMPLATES.keys())
+            action_labels = [shell_menu_module.ACTION_TEMPLATES[k][0] for k in action_keys]
+            action_var = tk.StringVar(value=action_labels[0])
+            ttk.Combobox(
+                body, textvariable=action_var, state='readonly', width=34,
+                values=action_labels,
+            ).grid(row=2, column=1, sticky='we', pady=3)
+            ttk.Label(body, text='Custom args (optional):').grid(row=3, column=0, sticky='w', pady=3)
+            args_var = tk.StringVar(value='')
+            ttk.Entry(body, textvariable=args_var, width=36).grid(row=3, column=1, sticky='we', pady=3)
+            ttk.Label(body, text='Example: --shell-archive "%1"', style='Info.TLabel').grid(
+                row=4, column=1, sticky='w')
+
+            def save_custom():
+                label = label_var.get().strip()
+                if not label:
+                    messagebox.showwarning('Custom menu', 'Enter a menu label.', parent=sub)
+                    return
+                try:
+                    target_key = target_keys[target_labels.index(target_var.get())]
+                except ValueError:
+                    target_key = target_keys[0]
+                try:
+                    action_key = action_keys[action_labels.index(action_var.get())]
+                except ValueError:
+                    action_key = action_keys[0]
+                cfg.setdefault('custom', []).append({
+                    'id': f'custom_{len(cfg.get("custom") or []) + 1}',
+                    'label': label,
+                    'target': target_key,
+                    'action': action_key,
+                    'custom_args': args_var.get().strip(),
+                    'enabled': True,
+                })
+                refresh_custom_list()
+                sub.destroy()
+
+            btn_row = ttk.Frame(body)
+            btn_row.grid(row=5, column=0, columnspan=2, pady=(10, 0), sticky='e')
+            ttk.Button(btn_row, text='Cancel', command=sub.destroy).pack(side='right')
+            ttk.Button(btn_row, text='Add', style='Primary.TButton', command=save_custom).pack(
+                side='right', padx=(0, 8))
+            body.columnconfigure(1, weight=1)
+
+        def remove_custom():
+            sel = custom_list.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            customs = cfg.get('custom') or []
+            if 0 <= idx < len(customs):
+                customs.pop(idx)
+                cfg['custom'] = customs
+                refresh_custom_list()
+
+        ttk.Button(custom_btns, text='Add custom menu…', command=add_custom).pack(side='left')
+        ttk.Button(custom_btns, text='Remove selected', command=remove_custom).pack(side='left', padx=6)
+
+        status = ttk.Label(frm, text='', style='Info.TLabel', wraplength=520)
+        status.pack(anchor='w', pady=(0, 8))
+
+        def save_cfg_from_ui():
+            cfg['presets'] = {pid: bool(var.get()) for pid, var in preset_vars.items()}
+            shell_menu_module.save_config(cfg)
+
+        def do_install():
+            save_cfg_from_ui()
+            try:
+                shell_menu_module.uninstall_all(cfg)
+                installed = shell_menu_module.install_all(self._shell_exe_path(), cfg)
+            except OSError as e:
+                messagebox.showerror('Context Menus', str(e), parent=dlg)
+                return
+            status.config(text=f'Installed {len(installed)} Explorer menu(s). '
+                                 'Right-click files or folders in File Explorer to use them.')
+            if installed:
+                preview = installed[0].get('command', '')
+                status.config(text=status.cget('text') + f'\nExample: {preview}')
+
+        def do_remove():
+            save_cfg_from_ui()
+            try:
+                shell_menu_module.uninstall_all(cfg)
+            except OSError as e:
+                messagebox.showerror('Context Menus', str(e), parent=dlg)
+                return
+            status.config(text='Removed Cleanroom entries from Explorer context menus.')
+
+        actions = ttk.Frame(frm)
+        actions.pack(fill='x')
+        ttk.Button(actions, text='Close', command=dlg.destroy).pack(side='right')
+        ttk.Button(actions, text='Remove from Explorer', style='Action.TButton',
+                   command=do_remove).pack(side='right', padx=(0, 8))
+        ttk.Button(actions, text='Install to Explorer', style='Primary.TButton',
+                   command=do_install).pack(side='right', padx=(0, 8))
+        dlg.geometry('560x520')
+
     def _view_receipt_file(self, path, preview=False):
         if receipts_module is None:
             messagebox.showerror('Receipt', 'Receipts module unavailable.')
@@ -3503,29 +4085,63 @@ class StartupManagerGUI(ctk.CTk):
             self._show_text_dialog('Cleanroom Receipt', body)
 
     def confirm_prune_selected(self):
-        if archive_custody is None:
-            messagebox.showerror('Prune', 'Archive custody module unavailable.')
-            return
         recs = self._selected_archive_records()
+        self._run_archive_delete(recs, context='archive')
+
+    def _open_archive_settings(self):
+        self.tab_control.select(self.settings_tab)
+
+    def _restore_row_to_archive_record(self, idx):
+        src, dest, ts, entry = self.restore_entries[idx]
+        if isinstance(entry, dict):
+            return {
+                'src': src,
+                'dest': dest,
+                'when': entry.get('when') or ts,
+                'size': entry.get('size', 0),
+                'reason': entry.get('reason', ''),
+            }
+        return {'src': src, 'dest': dest, 'when': ts, 'size': 0, 'reason': ''}
+
+    def confirm_delete_restore_selected(self):
+        idx = self._selected_restore_index()
+        if idx is None:
+            messagebox.showinfo('Delete from Archive', 'Select a restore entry first.')
+            return
+        src, dest, ts, entry = self.restore_entries[idx]
+        if not dest:
+            messagebox.showinfo('Delete from Archive', 'No archive path recorded for this entry.')
+            return
+        if not Path(dest).exists():
+            messagebox.showinfo(
+                'Delete from Archive',
+                f'The archived copy is already gone or missing:\n{dest}')
+            return
+        rec = self._restore_row_to_archive_record(idx)
+        self._run_archive_delete([rec], context='restore')
+
+    def _run_archive_delete(self, recs, context='archive'):
+        if archive_custody is None:
+            messagebox.showerror('Delete from Archive', 'Archive custody module unavailable.')
+            return
         if not recs:
-            messagebox.showinfo('Archive Prune Recommendations',
-                                'Select archived file(s) to prune from custody.')
+            messagebox.showinfo('Delete from Archive', 'Select archived file(s) to delete.')
             return
         lines = [f'{self._format_size(r.get("size", 0))}  {r.get("dest")}' for r in recs[:15]]
         if len(recs) > 15:
             lines.append(f'… and {len(recs) - 15} more')
         msg = (
-            'This permanently removes selected files from Cleanroom\'s archive.\n'
+            'This permanently deletes selected files from Cleanroom\'s archive.\n'
             'Original live files are not touched.\n'
-            'Restoring these archived copies will no longer be possible after pruning.\n\n'
+            'You will not be able to restore these archived copies afterward.\n\n'
             + '\n'.join(lines)
         )
-        if not messagebox.askokcancel('Archive Prune Recommendations', msg):
+        if not messagebox.askokcancel('Delete from Archive', msg):
             return
         if not messagebox.askokcancel(
-                'Confirm Prune',
-                f'Prune {len(recs)} archived file(s) from custody?\n\n'
-                'This cannot be undone. A Prune Receipt will be written.'):
+                'Confirm Delete',
+                f'Delete {len(recs)} archived file(s) from custody?\n\n'
+                'This cannot be undone. A delete receipt will be written.'):
             return
 
         log_path = self.restore_log_path
@@ -3536,23 +4152,27 @@ class StartupManagerGUI(ctk.CTk):
 
         def done(result, err):
             if err is not None:
-                messagebox.showerror('Prune', str(err))
+                messagebox.showerror('Delete from Archive', str(err))
                 return
             n = len(result.get('pruned', []))
+            skipped = result.get('skipped') or []
             freed = self._format_size(result.get('bytes_pruned', 0))
             rp = result.get('receipt_path')
-            messagebox.showinfo('Prune Receipt',
-                                f'Pruned {n} archived file(s) ({freed}) from custody.\n'
-                                f'Original live files were not touched.')
+            detail = f'Deleted {n} archived file(s) ({freed}) from custody.\nOriginal live files were not touched.'
+            if skipped:
+                detail += f'\n\nSkipped {len(skipped)} item(s) — see Activity log.'
+            messagebox.showinfo('Delete Receipt', detail)
             if rp and Path(rp).is_file():
                 self._view_receipt_file(rp)
             self.refresh_activity()
             self.refresh_restore()
+            if context == 'archive':
+                self.refresh_archive_browser()
 
         self._run_bg(work, done)
 
     def prune_archive_dialog(self):
-        """Legacy entry — open Archive Browser with Safe to prune filter."""
+        """Open Archive Browser filtered to Safe to delete recommendations."""
         if archive_custody and hasattr(self, '_archive_prune_filter'):
             self._archive_prune_filter.set(archive_custody.PRUNE_SAFE)
         self.open_archive_browser_tab()
@@ -4639,6 +5259,9 @@ def _parse_startup_argv(argv):
     import argparse
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument('--open-receipt', metavar='PATH', default=None)
+    ap.add_argument('--open-tab', choices=('archive', 'restore', 'settings'), default=None)
+    ap.add_argument('--shell-archive', metavar='PATH', default=None)
+    ap.add_argument('--shell-delete-archive', metavar='PATH', default=None)
     args, _ = ap.parse_known_args(argv)
     return args
 
@@ -4688,11 +5311,25 @@ if __name__ == '__main__':
     _startup = _parse_startup_argv(sys.argv[1:])
     if _startup.open_receipt:
         sys.exit(open_receipt_standalone(_startup.open_receipt))
+    if _startup.shell_archive:
+        if shell_actions_module is None:
+            print('shell-actions unavailable', file=sys.stderr)
+            sys.exit(2)
+        ok, msg = shell_actions_module.archive_path(_startup.shell_archive)
+        print(msg)
+        sys.exit(0 if ok else 1)
+    if _startup.shell_delete_archive:
+        if shell_actions_module is None:
+            print('shell-actions unavailable', file=sys.stderr)
+            sys.exit(2)
+        ok, msg = shell_actions_module.delete_archive_path(_startup.shell_delete_archive)
+        print(msg)
+        sys.exit(0 if ok else 1)
     if '--headless-clean' in sys.argv[1:]:
         sys.exit(_headless_main(sys.argv[1:]))
     # Rebuild the window when the user flips the theme.
     while True:
-        app = StartupManagerGUI()
+        app = StartupManagerGUI(initial_tab=_startup.open_tab)
         app.mainloop()
         if not getattr(app, 'wants_restart', False):
             break
