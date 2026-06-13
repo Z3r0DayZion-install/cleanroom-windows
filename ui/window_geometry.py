@@ -4,8 +4,9 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-DEFAULT_SIZE = (1320, 800)
-MIN_SIZE = (1080, 660)
+DEFAULT_SIZE = (1280, 720)
+MIN_SIZE = (960, 580)
+MAX_HEIGHT_RATIO = 0.72  # prevent tall skinny windows (h/w)
 MARGIN = 28
 TASKBAR_RESERVE = 52
 
@@ -51,6 +52,9 @@ def compute_geometry(widget, prefs: dict | None = None):
         y = int(saved.get('y', (avail_h - h) // 2))
         w = max(min_w, min(w, sw - margin))
         h = max(min_h, min(h, avail_h - margin))
+        max_h = max(min_h, int(w * MAX_HEIGHT_RATIO))
+        if h > max_h:
+            h = max_h
         x = max(0, min(x, sw - w))
         y = max(0, min(y, avail_h - h))
         return w, h, x, y, bool(saved.get('maximized'))
