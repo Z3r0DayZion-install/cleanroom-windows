@@ -5,7 +5,10 @@ import brand
 import customtkinter as ctk
 from ui import ctk_theme
 from ui.launcher import run_launch_splash
-from ui.window_geometry import apply_window_geometry, bind_window_tracking, animations_disabled, MAX_SIZE, MIN_SIZE
+from ui.window_geometry import (
+    apply_window_geometry, bind_window_tracking, animations_disabled,
+    MAX_SIZE, MIN_SIZE, apply_dialog_geometry,
+)
 from ui.receipt_animation import (
     ReceiptPrinterPanel,
     DEFAULT_LINES,
@@ -498,10 +501,15 @@ class StartupManagerGUI(ctk.CTk):
         if hasattr(self, 'ctx_desc_lbl') and self.ctx_desc_lbl is not None:
             self.ctx_desc_lbl.configure(wraplength=wrap)
         if hasattr(self, 'ctx_next_lbl'):
-            self.ctx_next_lbl.configure(wraplength=max(320, w - 380))
+            self.ctx_next_lbl.configure(wraplength=max(280, min(720, w - 340)))
+        if hasattr(self, 'ctx_subtitle_lbl'):
+            if h < 680:
+                self.ctx_subtitle_lbl.pack_forget()
+            else:
+                self.ctx_subtitle_lbl.pack(side='left', padx=(8, 0))
         if hasattr(self, '_hdr_tagline_lbl'):
             self._hdr_tagline_lbl.configure(wraplength=max(360, w - 80))
-            if h < 680:
+            if h < 740:
                 self._hdr_tagline_lbl.pack_forget()
             else:
                 self._hdr_tagline_lbl.pack(anchor='w', pady=(2, 0))
@@ -511,7 +519,14 @@ class StartupManagerGUI(ctk.CTk):
                 self._hdr_hero.grid(row=1, column=0, sticky='w', pady=(4, 0))
             else:
                 self._hdr_badges.grid(row=0, column=0, sticky='w')
-                self._hdr_hero.grid(row=0, column=1, sticky='e', padx=(8, 0), pady=0)
+                if h < 660:
+                    self._hdr_hero.grid_remove()
+                else:
+                    self._hdr_hero.grid(row=0, column=1, sticky='e', padx=(8, 0), pady=0)
+        if hasattr(self, 'tb_preview'):
+            short_tb = w < 1000
+            self.tb_preview.configure(text='🧾 Preview' if short_tb else '🧾 Preview Receipt')
+            self.tb_apply.configure(text='🗂 Archive' if short_tb else '🗂 Archive & Clean')
         if hasattr(self, '_body_grid'):
             if w > MAX_SIZE[0] + 32:
                 center_w = MAX_SIZE[0]
@@ -542,6 +557,11 @@ class StartupManagerGUI(ctk.CTk):
                 getattr(self, attr).configure(wraplength=max(180, preview_w - 24))
         if hasattr(self, 'detail_hint'):
             self.detail_hint.configure(wraplength=max(400, w - 360))
+        if hasattr(self, '_startup_detail_frame'):
+            if h < 620:
+                self._startup_detail_frame.grid_remove()
+            else:
+                self._startup_detail_frame.grid(row=1, column=0, sticky='ew', pady=(8, 0))
         wrap = max(420, w - 340)
         for attr in ('uninst_detail_what', 'uninst_detail_does',
                      'uninst_detail_need', 'uninst_detail_uninst'):
@@ -982,9 +1002,15 @@ class StartupManagerGUI(ctk.CTk):
         sidebar.pack(side='left', fill='y', padx=(0, 10), pady=(0, 4))
         sidebar.configure(width=188)
         sidebar.pack_propagate(False)
+        sidebar.grid_rowconfigure(3, weight=1)
+        sidebar.grid_columnconfigure(0, weight=1)
 
         ctk_theme.label(sidebar, brand.APP_DISPLAY, text_color=TEXT,
-                        font_size=13, weight='bold').pack(anchor='w', padx=12, pady=(12, 10))
+                        font_size=13, weight='bold').grid(
+            row=0, column=0, sticky='ew', padx=12, pady=(12, 8))
+
+        nav_wrap = ctk_theme.frame(sidebar, SIDEBAR_BG)
+        nav_wrap.grid(row=1, column=0, sticky='ew', padx=6)
         self._nav_buttons = []
         nav_tips = (
             'Proof dashboard — candidates, disk foresight, receipt preview.',
@@ -999,17 +1025,35 @@ class StartupManagerGUI(ctk.CTk):
         for idx, label in enumerate(('📋  Review', '📊  Activity', '🚀  Startup', '🧹  Cleaner',
                                      '🗑  Uninstaller', '↩  Restore', '🗂️  Archive', '⚙  Settings')):
             btn = ctk_theme.button(
-                sidebar, label, lambda i=idx: self._navigate_to_tab(i),
+                nav_wrap, label, lambda i=idx: self._navigate_to_tab(i),
                 fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
-            btn.pack(fill='x', pady=1, padx=6)
+            btn.pack(fill='x', pady=1)
             self._nav_buttons.append(btn)
             if idx < len(nav_tips):
                 self._add_tooltip(btn, nav_tips[idx])
 
-        sep = ctk.CTkFrame(sidebar, height=1, fg_color=BORDER, corner_radius=0)
-        sep.pack(fill='x', pady=10, padx=10)
-        ctk_theme.label(sidebar, 'Tools', text_color=TEXT, font_size=12, weight='bold').pack(
-            anchor='w', padx=12, pady=(0, 8))
+        self._sidebar_explorer_btn = ctk_theme.button(
+            sidebar, '🖱  Explorer Context Menus…', self.open_shell_context_menu_tool,
+            fg_color=ACCENT_SOFT, hover_color=ACCENT, text_color=ACCENT,
+        )
+        self._sidebar_explorer_btn.grid(row=2, column=0, sticky='ew', padx=6, pady=(6, 4))
+        self._add_tooltip(
+            self._sidebar_explorer_btn,
+            'Build and install Windows Explorer right-click menus (HKCU, per-user).\n'
+            'Add presets or custom menus, then Install to Explorer.',
+        )
+
+        tools_scroll = ctk.CTkScrollableFrame(
+            sidebar, fg_color=SIDEBAR_BG, corner_radius=0, width=176,
+            scrollbar_button_color=BORDER, scrollbar_button_hover_color=ACCENT_SOFT,
+        )
+        tools_scroll.grid(row=3, column=0, sticky='nsew', padx=4, pady=(0, 4))
+        self._sidebar_tools_scroll = tools_scroll
+
+        sep = ctk.CTkFrame(tools_scroll, height=1, fg_color=BORDER, corner_radius=0)
+        sep.pack(fill='x', pady=(2, 8), padx=4)
+        ctk_theme.label(tools_scroll, 'Tools', text_color=TEXT, font_size=12, weight='bold').pack(
+            anchor='w', padx=8, pady=(0, 6))
         tools = [
             ('📸  Registry Snapshot', self.open_registry_health,
              'Find registry entries pointing at missing files. Archive-first.'),
@@ -1027,20 +1071,19 @@ class StartupManagerGUI(ctk.CTk):
              'Cleanroom has ever done on this PC.'),
             ('⏰  Schedule', self.schedule_optimization,
              'Schedule recurring cleanup via Task Scheduler.'),
-            ('🖱  Explorer Context Menus', self.open_shell_context_menu_tool,
-             'Add Cleanroom actions to Windows right-click menus in File Explorer.'),
         ]
         for label, cmd, tip in tools:
             btn = ctk_theme.button(
-                sidebar, label, cmd,
+                tools_scroll, label, cmd,
                 fg_color='transparent', hover_color=ACCENT_SOFT, text_color=TEXT)
-            btn.pack(fill='x', pady=1, padx=6)
+            btn.pack(fill='x', pady=1, padx=4)
             self._add_tooltip(btn, tip)
 
-        sep2 = ctk.CTkFrame(sidebar, height=1, fg_color=BORDER, corner_radius=0)
-        sep2.pack(fill='x', pady=(6, 0), padx=10)
-        ctk_theme.label(sidebar, 'F5 refresh · Ctrl+F search · Ctrl+1–8 tabs',
-                        text_color=MUTED, font_size=9).pack(anchor='w', padx=12, pady=(4, 8))
+        footer = ctk_theme.frame(sidebar, SIDEBAR_BG)
+        footer.grid(row=4, column=0, sticky='ew', padx=8, pady=(0, 8))
+        ctk.CTkFrame(footer, height=1, fg_color=BORDER, corner_radius=0).pack(fill='x', pady=(0, 6))
+        ctk_theme.label(footer, 'F5 refresh · Ctrl+F search · Ctrl+1–8 tabs',
+                        text_color=MUTED, font_size=9).pack(anchor='w')
 
     def _sync_nav_buttons(self, event=None):
         try:
@@ -1220,23 +1263,25 @@ class StartupManagerGUI(ctk.CTk):
                           'Bytes in custody = verified files still restorable in the archive.')
         self._add_tooltip(self.stat_act_pruned,
                           'Bytes pruned = archive custody permanently removed (original files untouched).')
-        ttk.Label(top, text='Reclaimable = current scan candidates · '
+
+        ttk.Label(self.activity_tab, text='Reclaimable = current scan candidates · '
                             'Bytes in custody = verified restorable files · '
                             'Bytes moved = lifetime logged archive movement',
-                  style='Info.TLabel', wraplength=520).pack(side='left', padx=(8, 0), anchor='center')
+                  style='Info.TLabel', wraplength=720).pack(fill='x', padx=10, pady=(0, 6))
 
         bar = ttk.Frame(self.activity_tab, style='Content.TFrame')
         bar.pack(fill='x', padx=10, pady=(0, 6))
-        ttk.Button(bar, text='Refresh', style='Action.TButton',
-                   command=self.refresh_activity).pack(side='left')
+        self.act_refresh_btn = ttk.Button(bar, text='Refresh', style='Action.TButton',
+                   command=self.refresh_activity)
+        self.act_refresh_btn.pack(side='left')
         ttk.Button(bar, text='Verify Custody', style='Action.TButton',
                    command=self.verify_custody).pack(side='left', padx=6)
         ttk.Button(bar, text='Proof Pack (HTML)', style='Primary.TButton',
                    command=self.export_audit).pack(side='left', padx=6)
         ttk.Button(bar, text='Open Archive Tab', style='Action.TButton',
                    command=self.open_archive_browser_tab).pack(side='left', padx=6)
-        ttk.Label(bar, text='Every row is a real archived artifact — ✓ means it\'s still on disk.',
-                  style='Info.TLabel').pack(side='left', padx=(12, 0))
+        ttk.Label(self.activity_tab, text='Every row is a real archived artifact — ✓ means it\'s still on disk.',
+                  style='Info.TLabel', wraplength=720).pack(fill='x', padx=10, pady=(0, 4))
 
         self.act_sub_notebook = None
         wrap = ttk.Frame(self.activity_tab, style='Card.TFrame')
@@ -1244,14 +1289,18 @@ class StartupManagerGUI(ctk.CTk):
         cols = ('status', 'when', 'reason', 'source', 'size')
         self.activity_tree = ttk.Treeview(wrap, columns=cols, show='headings', selectmode='browse')
         for c, label, w in (('status', '', 36), ('when', 'When', 140), ('reason', 'Reason', 130),
-                            ('source', 'Source', 420), ('size', 'Size', 80)):
+                            ('source', 'Source', 320), ('size', 'Size', 80)):
             self.activity_tree.heading(c, text=label)
             anchor = 'center' if c in ('status', 'size') else 'w'
-            self.activity_tree.column(c, width=w, anchor=anchor, stretch=(c == 'source'))
+            self.activity_tree.column(c, width=w, anchor=anchor, stretch=False)
         vsb = ttk.Scrollbar(wrap, orient='vertical', command=self.activity_tree.yview)
-        self.activity_tree.configure(yscrollcommand=vsb.set)
-        self.activity_tree.pack(side='left', fill='both', expand=True)
-        vsb.pack(side='right', fill='y')
+        hsb = ttk.Scrollbar(wrap, orient='horizontal', command=self.activity_tree.xview)
+        self.activity_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        wrap.grid_rowconfigure(0, weight=1)
+        wrap.grid_columnconfigure(0, weight=1)
+        self.activity_tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
         self.activity_tree.tag_configure('present', foreground=ACCENT)
         self.activity_tree.tag_configure('missing', foreground=SEVERITY_COLORS['high'])
         self.activity_empty = self._make_empty_hint(
@@ -1299,13 +1348,16 @@ class StartupManagerGUI(ctk.CTk):
         self.delete_archive_btn.pack(side='left', padx=(0, 6))
         self._add_tooltip(self.delete_archive_btn,
                           'Permanently delete selected archived copies. Original live files untouched.')
-        ttk.Button(qa_primary, text='Select All Safe', style='Action.TButton',
+
+        qa_bulk = ttk.Frame(qa_inner, style='Card.TFrame')
+        qa_bulk.pack(fill='x', pady=(6, 0))
+        ttk.Button(qa_bulk, text='Select All Safe', style='Action.TButton',
                    command=self._archive_select_all_safe).pack(side='left', padx=(0, 6))
-        ttk.Button(qa_primary, text='Delete All Safe…', style='Action.TButton',
+        ttk.Button(qa_bulk, text='Delete All Safe…', style='Action.TButton',
                    command=self.confirm_delete_all_safe).pack(side='left', padx=(0, 6))
-        ttk.Button(qa_primary, text='Delete Older Than…', style='Action.TButton',
+        ttk.Button(qa_bulk, text='Delete Older Than…', style='Action.TButton',
                    command=self.confirm_delete_older_than).pack(side='left', padx=(0, 6))
-        ttk.Button(qa_primary, text='Clear Selection', style='Action.TButton',
+        ttk.Button(qa_bulk, text='Clear Selection', style='Action.TButton',
                    command=lambda: self.archive_tree.selection_remove(
                        self.archive_tree.selection())).pack(side='left')
 
@@ -1313,8 +1365,6 @@ class StartupManagerGUI(ctk.CTk):
         qa_secondary.pack(fill='x', pady=(6, 0))
         ttk.Button(qa_secondary, text='Open Archive Folder', style='Action.TButton',
                    command=self.open_archive_folder).pack(side='left', padx=(0, 6))
-        ttk.Button(qa_secondary, text='Explorer Context Menus…', style='Action.TButton',
-                   command=self.open_shell_context_menu_tool).pack(side='left', padx=(0, 6))
         ttk.Button(qa_secondary, text='Archive Settings…', style='Action.TButton',
                    command=self._open_archive_settings).pack(side='left', padx=(0, 6))
         ttk.Button(qa_secondary, text='Refresh', style='Action.TButton',
@@ -1365,7 +1415,7 @@ class StartupManagerGUI(ctk.CTk):
             self.archive_tree.heading(c, text=headings[c])
             anchor = 'center' if c in ('size', 'restorable', 'receipt', 'prune_rank') else 'w'
             self.archive_tree.column(c, width=widths[c], anchor=anchor,
-                                     stretch=c in ('src', 'dest'))
+                                     stretch=False)
         vsb = ttk.Scrollbar(tree_wrap, orient='vertical', command=self.archive_tree.yview)
         hsb = ttk.Scrollbar(tree_wrap, orient='horizontal', command=self.archive_tree.xview)
         self.archive_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -1765,53 +1815,8 @@ class StartupManagerGUI(ctk.CTk):
         self.search_entry = search
         self._add_tooltip(search, 'Search by name, location, or command text. (Ctrl+F)')
 
-        container = ttk.Frame(self.startup_tab)
-        container.pack(fill='both', expand=True, padx=10, pady=(0, 4))
-
-        tree_frame = ttk.Frame(container)
-        tree_frame.pack(fill='both', expand=True)
-        cols = ('name', 'source', 'location', 'command')
-        self.tree = ttk.Treeview(tree_frame, columns=cols, show='headings', selectmode='browse')
-        for col, label in (('name', 'Name'), ('source', 'Source'), ('location', 'Location'), ('command', 'Command')):
-            self.tree.heading(col, text=label, command=lambda c=col: self._sort_column(c))
-        self.tree.column('name', width=170, anchor='w')
-        self.tree.column('source', width=110, anchor='center')
-        self.tree.column('location', width=240, anchor='w')
-        self.tree.column('command', width=410, anchor='w')
-        self.tree.pack(fill='both', expand=True, side='left')
-        self.tree.tag_configure('oddrow', background=CARD_BG)
-        self.tree.tag_configure('evenrow', background=ROW_ALT)
-        self.tree.bind('<<TreeviewSelect>>', self._on_row_select)
-        self.startup_empty_hint = self._make_empty_hint(
-            self.tree, 'No startup items to show.\nTry clearing the search or switching category.')
-
-        vscroll = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tree.yview)
-        hscroll = ttk.Scrollbar(tree_frame, orient='horizontal', command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
-        vscroll.pack(side='right', fill='y')
-        hscroll.pack(side='bottom', fill='x')
-
-        detail_frame = ttk.Labelframe(container, text='Details', style='Detail.TLabelframe')
-        detail_frame.pack(fill='x', pady=(8, 0))
-        details_grid = ttk.Frame(detail_frame, style='Detail.TLabelframe')
-        details_grid.pack(fill='x', padx=10, pady=10)
-        self.detail_name = ttk.Label(details_grid, text='Name: —', style='CardInfo.TLabel')
-        self.detail_source = ttk.Label(details_grid, text='Source: —', style='CardInfo.TLabel')
-        self.detail_location = ttk.Label(details_grid, text='Location: —', style='CardInfo.TLabel')
-        self.detail_command = ttk.Label(details_grid, text='Command: —', style='CardInfo.TLabel')
-        self.detail_name.grid(row=0, column=0, sticky='w', padx=(0, 12), pady=2)
-        self.detail_source.grid(row=0, column=1, sticky='w', padx=(0, 12), pady=2)
-        self.detail_location.grid(row=1, column=0, sticky='w', padx=(0, 12), pady=2, columnspan=2)
-        self.detail_command.grid(row=2, column=0, sticky='w', padx=(0, 12), pady=2, columnspan=2)
-        self.detail_hint = ttk.Label(details_grid, text='', style='CardInfo.TLabel',
-                                     foreground=ACCENT, wraplength=900, justify='left')
-        self.detail_hint.grid(row=3, column=0, sticky='w', padx=(0, 12), pady=(6, 2), columnspan=2)
-        self.copy_command_detail = ttk.Button(detail_frame, text='Copy Command', style='Action.TButton',
-                                              command=self.copy_command)
-        self.copy_command_detail.pack(anchor='e', padx=10, pady=(0, 8))
-
-        startup_actions = ttk.Frame(container)
-        startup_actions.pack(fill='x', padx=10, pady=(6, 10))
+        startup_actions = ttk.Frame(self.startup_tab, style='Content.TFrame')
+        startup_actions.pack(fill='x', padx=10, pady=(0, 6))
         self.refresh_btn = ttk.Button(startup_actions, text='Refresh', style='Action.TButton', command=self.refresh)
         self.refresh_btn.pack(side='left')
         self.enable_btn = ttk.Button(startup_actions, text='Enable Selected', style='Action.TButton',
@@ -1825,6 +1830,54 @@ class StartupManagerGUI(ctk.CTk):
         self.copy_cmd_btn.pack(side='left', padx=6)
         self.status_lbl = ttk.Label(startup_actions, text='', style='Info.TLabel')
         self.status_lbl.pack(side='right')
+
+        container = ttk.Frame(self.startup_tab)
+        container.pack(fill='both', expand=True, padx=10, pady=(0, 4))
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+        tree_frame = ttk.Frame(container)
+        tree_frame.grid(row=0, column=0, sticky='nsew')
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        cols = ('name', 'source', 'location', 'command')
+        self.tree = ttk.Treeview(tree_frame, columns=cols, show='headings', selectmode='browse')
+        for col, label in (('name', 'Name'), ('source', 'Source'), ('location', 'Location'), ('command', 'Command')):
+            self.tree.heading(col, text=label, command=lambda c=col: self._sort_column(c))
+        self.tree.column('name', width=170, anchor='w', stretch=False)
+        self.tree.column('source', width=110, anchor='center', stretch=False)
+        self.tree.column('location', width=180, anchor='w', stretch=False)
+        self.tree.column('command', width=280, anchor='w', stretch=False)
+        self.tree.tag_configure('oddrow', background=CARD_BG)
+        self.tree.tag_configure('evenrow', background=ROW_ALT)
+        self.tree.bind('<<TreeviewSelect>>', self._on_row_select)
+        self.startup_empty_hint = self._make_empty_hint(
+            self.tree, 'No startup items to show.\nTry clearing the search or switching category.')
+
+        vscroll = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tree.yview)
+        hscroll = ttk.Scrollbar(tree_frame, orient='horizontal', command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
+        self.tree.grid(row=0, column=0, sticky='nsew')
+        vscroll.grid(row=0, column=1, sticky='ns')
+        hscroll.grid(row=1, column=0, sticky='ew')
+
+        self._startup_detail_frame = ttk.Labelframe(container, text='Details', style='Detail.TLabelframe')
+        self._startup_detail_frame.grid(row=1, column=0, sticky='ew', pady=(8, 0))
+        details_grid = ttk.Frame(self._startup_detail_frame, style='Detail.TLabelframe')
+        details_grid.pack(fill='x', padx=10, pady=10)
+        self.detail_name = ttk.Label(details_grid, text='Name: —', style='CardInfo.TLabel')
+        self.detail_source = ttk.Label(details_grid, text='Source: —', style='CardInfo.TLabel')
+        self.detail_location = ttk.Label(details_grid, text='Location: —', style='CardInfo.TLabel')
+        self.detail_command = ttk.Label(details_grid, text='Command: —', style='CardInfo.TLabel')
+        self.detail_name.grid(row=0, column=0, sticky='w', padx=(0, 12), pady=2)
+        self.detail_source.grid(row=0, column=1, sticky='w', padx=(0, 12), pady=2)
+        self.detail_location.grid(row=1, column=0, sticky='w', padx=(0, 12), pady=2, columnspan=2)
+        self.detail_command.grid(row=2, column=0, sticky='w', padx=(0, 12), pady=2, columnspan=2)
+        self.detail_hint = ttk.Label(details_grid, text='', style='CardInfo.TLabel',
+                                     foreground=ACCENT, wraplength=720, justify='left')
+        self.detail_hint.grid(row=3, column=0, sticky='w', padx=(0, 12), pady=(6, 2), columnspan=2)
+        self.copy_command_detail = ttk.Button(self._startup_detail_frame, text='Copy Command',
+                                              style='Action.TButton', command=self.copy_command)
+        self.copy_command_detail.pack(anchor='e', padx=10, pady=(0, 8))
 
         self._add_tooltip(self.refresh_btn, 'Refresh the startup list from registry and startup folders.')
         self._add_tooltip(self.enable_btn, 'Enable the selected registry startup item.')
@@ -2036,23 +2089,51 @@ class StartupManagerGUI(ctk.CTk):
         self._add_tooltip(self.open_archived_btn, 'Open the archived copy with its default application.')
 
     def _build_settings_tab(self):
-        header = ttk.Frame(self.settings_tab, style='Content.TFrame')
+        self.settings_tab.grid_rowconfigure(0, weight=1)
+        self.settings_tab.grid_columnconfigure(0, weight=1)
+        scroll = ctk.CTkScrollableFrame(
+            self.settings_tab, fg_color=BG, corner_radius=0,
+            scrollbar_button_color=BORDER, scrollbar_button_hover_color=ACCENT_SOFT,
+        )
+        scroll.grid(row=0, column=0, sticky='nsew')
+        host = scroll
+
+        header = ttk.Frame(host, style='Content.TFrame')
         header.pack(fill='x', padx=10, pady=10)
         ttk.Label(header, text='Settings', style='Header.TLabel').pack(anchor='w')
         ttk.Label(header, text='Edit the cleanup configuration without leaving the app.',
                   style='SubHeader.TLabel').pack(anchor='w', pady=(4, 0))
 
-        local_box = ctk_theme.frame(self.settings_tab, CARD_BG, corner_radius=10)
+        local_box = ctk_theme.frame(host, CARD_BG, corner_radius=10)
         local_box.pack(fill='x', padx=10, pady=(0, 10))
         ctk_theme.label(
             local_box, 'Local-only', text_color=ACCENT, font_size=13, weight='bold',
         ).pack(anchor='w', padx=14, pady=(12, 4))
         ctk_theme.label(
             local_box, ctk_theme.LOCAL_ONLY_TEXT, text_color=TEXT, font_size=11,
-            wraplength=920, justify='left',
+            wraplength=720, justify='left',
         ).pack(anchor='w', padx=14, pady=(0, 12))
 
-        quick_box = ctk_theme.frame(self.settings_tab, CARD_BG, corner_radius=10)
+        shell_box = ctk_theme.frame(host, CARD_BG, corner_radius=10)
+        shell_box.pack(fill='x', padx=10, pady=(0, 10))
+        ctk_theme.label(
+            shell_box, 'Explorer context menus', text_color=ACCENT, font_size=13, weight='bold',
+        ).pack(anchor='w', padx=14, pady=(12, 4))
+        ctk_theme.label(
+            shell_box,
+            'Build Windows Explorer right-click menus (per-user HKCU). Choose built-in presets, '
+            'add custom menus, then Install to Explorer or Remove from Explorer.',
+            text_color=MUTED, font_size=10, wraplength=720, justify='left',
+        ).pack(anchor='w', padx=14, pady=(0, 8))
+        shell_btns = ttk.Frame(shell_box, style='Card.TFrame')
+        shell_btns.pack(fill='x', padx=14, pady=(0, 12))
+        self._settings_shell_btn = ttk.Button(
+            shell_btns, text='Open Context Menu Editor…', style='Primary.TButton',
+            command=self.open_shell_context_menu_tool,
+        )
+        self._settings_shell_btn.pack(side='left')
+
+        quick_box = ctk_theme.frame(host, CARD_BG, corner_radius=10)
         quick_box.pack(fill='x', padx=10, pady=(0, 10))
         ctk_theme.label(
             quick_box, 'Quick settings', text_color=ACCENT, font_size=13, weight='bold',
@@ -2095,7 +2176,7 @@ class StartupManagerGUI(ctk.CTk):
         self.set_power_var = tk.BooleanVar(value=bool(load_ui_prefs().get('power_user')))
         _quick_switch(2, 0, 'Power user mode (dense lists)', self.set_power_var)
 
-        archive_box = ctk_theme.frame(self.settings_tab, CARD_BG, corner_radius=10)
+        archive_box = ctk_theme.frame(host, CARD_BG, corner_radius=10)
         archive_box.pack(fill='x', padx=10, pady=(0, 10))
         ctk_theme.label(
             archive_box, 'Archive custody & delete', text_color=ACCENT, font_size=13, weight='bold',
@@ -2129,7 +2210,7 @@ class StartupManagerGUI(ctk.CTk):
         ttk.Button(archive_btns, text='Explorer Context Menus…', style='Action.TButton',
                    command=self.open_shell_context_menu_tool).pack(side='left', padx=(8, 0))
 
-        body = ttk.Frame(self.settings_tab, style='Content.TFrame')
+        body = ttk.Frame(host, style='Content.TFrame')
         body.pack(fill='both', expand=True, padx=10)
 
         # Left: scan paths
@@ -2205,7 +2286,7 @@ class StartupManagerGUI(ctk.CTk):
         grid.columnconfigure(1, weight=1)
 
         # Patterns
-        patterns = ttk.Frame(self.settings_tab, style='Content.TFrame')
+        patterns = ttk.Frame(host, style='Content.TFrame')
         patterns.pack(fill='both', expand=True, padx=10, pady=(8, 0))
         excl_box = ttk.Labelframe(patterns, text='What Cleanroom must never touch (exclude patterns)', style='Detail.TLabelframe')
         excl_box.pack(side='left', fill='both', expand=True, padx=(0, 8))
@@ -2220,9 +2301,9 @@ class StartupManagerGUI(ctk.CTk):
                                           highlightthickness=1, highlightbackground=BORDER)
         self.set_whitelist_text.pack(fill='both', expand=True, padx=8, pady=8)
 
-        # Footer
+        # Footer pinned below scroll area
         footer = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        footer.pack(fill='x', padx=10, pady=10)
+        footer.grid(row=1, column=0, sticky='ew', padx=10, pady=10)
         self.save_settings_btn = ttk.Button(footer, text='Save Settings', style='Primary.TButton',
                                             command=self.save_settings)
         self.save_settings_btn.pack(side='left')
@@ -3990,13 +4071,14 @@ class StartupManagerGUI(ctk.CTk):
             messagebox.showerror('Context Menus', 'Shell menu module unavailable.')
             return
         dlg = tk.Toplevel(self)
-        dlg.title('Explorer Context Menus')
+        dlg.title('Explorer Context Menu Editor')
         dlg.transient(self)
         dlg.grab_set()
         dlg.configure(bg=BG)
+        apply_dialog_geometry(dlg, self, 560, 520)
         frm = ttk.Frame(dlg, style='Content.TFrame', padding=12)
         frm.pack(fill='both', expand=True)
-        ttk.Label(frm, text='Windows Explorer right-click menus',
+        ttk.Label(frm, text='Explorer context menu editor',
                   style='Header.TLabel').pack(anchor='w')
         ttk.Label(
             frm,
@@ -4151,7 +4233,6 @@ class StartupManagerGUI(ctk.CTk):
                    command=do_remove).pack(side='right', padx=(0, 8))
         ttk.Button(actions, text='Install to Explorer', style='Primary.TButton',
                    command=do_install).pack(side='right', padx=(0, 8))
-        dlg.geometry('560x520')
 
     def _view_receipt_file(self, path, preview=False):
         if receipts_module is None:

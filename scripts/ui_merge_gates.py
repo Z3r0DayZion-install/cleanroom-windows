@@ -26,20 +26,44 @@ GEOMETRIES = (
 )
 
 TAB_ACTION_CHECKS = (
+    (0, 'review', (
+        ('health_canvas', 'Review health'),
+    )),
+    (1, 'activity', (
+        ('act_refresh_btn', 'Refresh'),
+    )),
+    (2, 'startup', (
+        ('cat_all', 'All'),
+        ('refresh_btn', 'Refresh'),
+    )),
     (3, 'cleaner', (
         ('scan_btn', 'Scan Now'),
         ('apply_clean_btn', 'Archive & Clean'),
+    )),
+    (4, 'uninstaller', (
+        ('uninst_uninstall_btn', 'Uninstall'),
     )),
     (5, 'restore', (
         ('reload_restore_btn', 'Reload Log'),
         ('restore_selected_btn', 'Restore Selected'),
     )),
+    (6, 'archive', (
+        ('delete_archive_btn', 'Delete from Archive'),
+    )),
+    (7, 'settings', (
+        ('_settings_shell_btn', 'Context Menu Editor'),
+        ('save_settings_btn', 'Save Settings'),
+    )),
+)
+
+SIDEBAR_CHECKS = (
+    ('_sidebar_explorer_btn', 'Explorer Context Menus'),
 )
 
 TOOLBAR_LABELS = (
     ('tb_scan', 'Scan'),
-    ('tb_preview', 'Preview Receipt'),
-    ('tb_apply', 'Archive & Clean'),
+    ('tb_preview', 'Preview'),
+    ('tb_apply', 'Archive'),
     ('tb_restore', 'Restore'),
 )
 
@@ -124,9 +148,17 @@ def check_layout(app, width: int, height: int, label: str, *, check_settings: bo
 
     issues.extend(_widget_ok(app.hdr_trust_value, f'{label}/Custody Trust value', 20, 16))
     issues.extend(_widget_ok(app.hdr_trust_lbl, f'{label}/Custody Trust label', 40, 12))
-    issues.extend(_widget_in_viewport(app.tb_apply, app, f'{label}/Archive & Clean toolbar'))
+    issues.extend(_widget_in_viewport(app.tb_apply, app, f'{label}/Archive toolbar'))
 
-    if not _find_text_in_tree(app, 'Preview Receipt'):
+    for attr, name in SIDEBAR_CHECKS:
+        widget = getattr(app, attr, None)
+        if widget is None:
+            issues.append(f'{label}/sidebar missing {attr}')
+            continue
+        issues.extend(_widget_ok(widget, f'{label}/sidebar/{name}', 80, 20))
+        issues.extend(_widget_in_viewport(widget, app, f'{label}/sidebar/{name}'))
+
+    if not _find_text_in_tree(app, 'Preview'):
         issues.append(f'{label}/proof-flow or Preview Receipt text missing')
     if not _find_text_in_tree(app, 'Archive-first mode is ON'):
         issues.append(f'{label}/archive-first banner missing')
@@ -155,12 +187,21 @@ def check_layout(app, width: int, height: int, label: str, *, check_settings: bo
 
     if check_settings:
         try:
-            app.tab_control.select(6)
+            app.tab_control.select(7)
             app.update_idletasks()
             app.update()
             time.sleep(0.1)
             if not _find_text_in_tree(app, 'local-only'):
                 issues.append(f'{label}/Settings local-only text missing')
+            shell_btn = getattr(app, '_settings_shell_btn', None)
+            if shell_btn is None:
+                issues.append(f'{label}/Settings missing context menu editor button')
+            else:
+                issues.extend(_widget_ok(shell_btn, f'{label}/Settings/Context Menu Editor', 80, 20))
+                issues.extend(_widget_in_viewport(shell_btn, app, f'{label}/Settings/Context Menu Editor'))
+            save_btn = getattr(app, 'save_settings_btn', None)
+            if save_btn is not None:
+                issues.extend(_widget_in_viewport(save_btn, app, f'{label}/Settings/Save Settings'))
         except Exception as exc:
             issues.append(f'{label}/Settings tab check error: {exc}')
 
@@ -183,7 +224,7 @@ def run_scaling_gates(tk_scaling: float = 1.0) -> int:
     all_issues: list[str] = []
     try:
         for w, h, label in GEOMETRIES:
-            issues = check_layout(app, w, h, label, check_settings=False)
+            issues = check_layout(app, w, h, label, check_settings=True)
             if issues:
                 all_issues.extend(issues)
                 for i in issues:

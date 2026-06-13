@@ -131,3 +131,28 @@ def bind_window_tracking(widget, *, on_save: Callable[[dict], None]) -> None:
         state['job'] = widget.after(450, _emit_save)
 
     widget.bind('<Configure>', _schedule_save, add='+')
+
+
+def apply_dialog_geometry(dlg, parent, pref_w: int, pref_h: int) -> None:
+    """Size and center a dialog over *parent*, clamped to the visible screen."""
+    dlg.update_idletasks()
+    try:
+        parent.update_idletasks()
+    except Exception:
+        pass
+    scale = dpi_scale(parent)
+    sw, avail_h, margin, _ = _screen_box(parent)
+    w = max(360, min(int(pref_w * scale), sw - margin, MAX_SIZE[0]))
+    h = max(280, min(int(pref_h * scale), avail_h - margin, MAX_SIZE[1]))
+    try:
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        x = px + max(0, (pw - w) // 2)
+        y = py + max(0, (ph - h) // 2)
+    except Exception:
+        x = max(0, (sw - w) // 2)
+        y = max(0, (avail_h - h) // 2)
+    x = max(0, min(x, sw - w))
+    y = max(0, min(y, avail_h - h))
+    dlg.minsize(min(360, w), min(280, h))
+    dlg.geometry(f'{w}x{h}+{x}+{y}')
