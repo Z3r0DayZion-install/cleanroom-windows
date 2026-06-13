@@ -367,6 +367,7 @@ class StartupManagerGUI(ctk.CTk):
         self._cached_scan_at = ''
         self._archive_context_menu = None
         self._restore_context_menu = None
+        self._chunk_tokens = {}
         self.protocol('WM_DELETE_WINDOW', self._on_window_close)
         self.after(50, self._poll_bg_queue)
 
@@ -1190,13 +1191,15 @@ class StartupManagerGUI(ctk.CTk):
                 nxt = 'Select a program — read the summary panel, then Uninstall or Force Remove.'
         elif tab_idx == 6:
             stats = getattr(self, '_archive_stats', {}) or {}
+            sel = len(self.archive_tree.selection()) if hasattr(self, 'archive_tree') else 0
             subtitle = (f'{stats.get("total", 0)} in custody · '
-                          f'{stats.get("safe_count", 0)} safe to delete')
+                          f'{stats.get("safe_count", 0)} safe to delete · '
+                          f'{sel} selected')
             if stats.get('safe_count', 0):
                 nxt = (f'{stats["safe_count"]} item(s) marked Safe to delete — '
-                       'review the list, then Delete from Archive.')
+                       'use Select All Safe, then Delete from Archive.')
             else:
-                nxt = 'Select items or use Delete Older Than… to reclaim archive disk space.'
+                nxt = 'Select rows or use Delete Older Than… to reclaim archive disk space.'
         elif tab_idx == 0:
             count = len(getattr(self, 'cleanup_items', []) or [])
             if count:
@@ -1692,13 +1695,14 @@ class StartupManagerGUI(ctk.CTk):
         qa_bulk.pack(fill='x', pady=(6, 0))
         ttk.Button(qa_bulk, text='Select All Safe', style='Action.TButton',
                    command=self._archive_select_all_safe).pack(side='left', padx=(0, 6))
+        ttk.Button(qa_bulk, text='Select Visible', style='Action.TButton',
+                   command=self._archive_select_visible).pack(side='left', padx=(0, 6))
         ttk.Button(qa_bulk, text='Delete All Safe…', style='Action.TButton',
                    command=self.confirm_delete_all_safe).pack(side='left', padx=(0, 6))
         ttk.Button(qa_bulk, text='Delete Older Than…', style='Action.TButton',
                    command=self.confirm_delete_older_than).pack(side='left', padx=(0, 6))
         ttk.Button(qa_bulk, text='Clear Selection', style='Action.TButton',
-                   command=lambda: self.archive_tree.selection_remove(
-                       self.archive_tree.selection())).pack(side='left')
+                   command=self._archive_clear_selection).pack(side='left')
 
         qa_secondary = ttk.Frame(qa_inner, style='Card.TFrame')
         qa_secondary.pack(fill='x', pady=(6, 0))
@@ -3116,7 +3120,7 @@ class StartupManagerGUI(ctk.CTk):
 
     def _populate_uninstall_tree(self):
         tree = self.uninstall_tree
-        tree.delete(*tree.get_children())
+        self._cancel_chunked_work('uninstall_tree')
         rows = self._visible_uninstall_rows()
         col = self._uninst_sort_col
         if col == 'size':
@@ -3126,10 +3130,13 @@ class StartupManagerGUI(ctk.CTk):
         elif col in ('name', 'publisher', 'version', 'key'):
             k = 'subkey' if col == 'key' else col
             rows.sort(key=lambda e: str(e.get(k, '')).lower(), reverse=self._uninst_sort_desc)
-        total_kb = 0
-        for i, e in enumerate(rows):
-            total_kb += e['size_kb']
-            idx = self.uninstall_entries.index(e)
+        total_kb = sum(e['size_kb'] for e in rows)
+        entry_to_idx = {id(e): i for i, e in enumerate(self.uninstall_entries)}
+        rows_with_idx = [(entry_to_idx[id(e)], e) for e in rows]
+        checked_visible = sum(1 for idx, _e in rows_with_idx if idx in self.uninst_checked)
+
+        def build_row(i, item):
+            idx, e = item
             size = self._format_size(e['size_kb'] * 1024) if e['size_kb'] else ''
             check = '☑' if idx in self.uninst_checked else '☐'
             values = [check, e['name'], e['publisher'], e['version'], size, e['install_date']]
@@ -3137,20 +3144,27 @@ class StartupManagerGUI(ctk.CTk):
                 hive_short = 'HKLM' if 'LOCAL_MACHINE' in e.get('hive', '') else 'HKCU'
                 values.append(f"{hive_short}\\…\\{e.get('subkey', '')}")
             values.append('🗑')
-            tree.insert('', 'end', iid=str(idx), values=tuple(values),
-                        tags=('evenrow' if i % 2 else 'oddrow',))
-        checked_visible = sum(1 for e in rows
-                              if self.uninstall_entries.index(e) in self.uninst_checked)
-        label = f'{len(rows)} programs'
-        if checked_visible:
-            label += f' · {checked_visible} checked'
-        self.uninst_count_lbl.config(text=label)
-        self.uninst_size_lbl.config(
-            text=self._format_size(total_kb * 1024) if total_kb else '')
-        if rows:
-            self.uninst_empty_hint.place_forget()
-        else:
-            self.uninst_empty_hint.place(relx=0.5, rely=0.4, anchor='center')
+            return (str(idx), tuple(values), ('evenrow' if i % 2 else 'oddrow',))
+
+        def on_complete():
+            label = f'{len(rows):,} programs'
+            if checked_visible:
+                label += f' · {checked_visible:,} checked'
+            self.uninst_count_lbl.config(text=label)
+            self.uninst_size_lbl.config(
+                text=self._format_size(total_kb * 1024) if total_kb else '')
+            self._refresh_empty_hint(self.uninst_empty_hint, tree)
+
+        self._chunked_tree_populate(
+            tree,
+            rows_with_idx,
+            build_row,
+            status_lbl=self.uninst_status_lbl,
+            empty_hint=self.uninst_empty_hint,
+            on_complete=on_complete,
+            token_key='uninstall_tree',
+            clear_selection=False,
+        )
 
     def _uninstall_sort(self, col):
         if self._uninst_sort_col == col:
@@ -3743,6 +3757,249 @@ class StartupManagerGUI(ctk.CTk):
         except Exception:
             pass  # window destroyed
 
+    def _cancel_chunked_work(self, key='tree'):
+        token = self._chunk_tokens.get(key, 0) + 1
+        self._chunk_tokens[key] = token
+        return token
+
+    def _chunk_work_alive(self, key, token):
+        return self._chunk_tokens.get(key, 0) == token
+
+    def _chunked_tree_populate(
+        self,
+        tree,
+        rows,
+        row_builder,
+        *,
+        batch_size=60,
+        status_lbl=None,
+        empty_hint=None,
+        on_complete=None,
+        token_key='tree',
+        clear_selection=True,
+    ):
+        """Insert tree rows in small batches so the Tk event loop stays responsive."""
+        token = self._cancel_chunked_work(token_key)
+        try:
+            tree.delete(*tree.get_children())
+        except Exception:
+            pass
+        if clear_selection:
+            try:
+                tree.selection_set(())
+            except Exception:
+                pass
+
+        total = len(rows)
+        if total == 0:
+            if empty_hint is not None:
+                empty_hint.place(relx=0.5, rely=0.4, anchor='center')
+            if status_lbl is not None:
+                status_lbl.config(text='')
+            if on_complete:
+                on_complete()
+            return
+
+        if empty_hint is not None:
+            empty_hint.place_forget()
+
+        if animations_disabled():
+            for j in range(total):
+                iid, values, tags = row_builder(j, rows[j])
+                tree.insert('', 'end', iid=iid, values=values, tags=tags)
+            if status_lbl is not None:
+                status_lbl.config(text='')
+            if on_complete:
+                on_complete()
+            return
+
+        if status_lbl is not None:
+            status_lbl.config(text=f'Loading… 0/{total:,}')
+
+        state = {'idx': 0}
+
+        def pump():
+            if not self._chunk_work_alive(token_key, token):
+                return
+            end = min(state['idx'] + batch_size, total)
+            for j in range(state['idx'], end):
+                iid, values, tags = row_builder(j, rows[j])
+                tree.insert('', 'end', iid=iid, values=values, tags=tags)
+            state['idx'] = end
+            if status_lbl is not None:
+                if state['idx'] < total:
+                    status_lbl.config(text=f'Loading… {state["idx"]:,}/{total:,}')
+                else:
+                    status_lbl.config(text='')
+            if state['idx'] < total:
+                self.after(1, pump)
+            elif on_complete:
+                on_complete()
+
+        self.after(0, pump)
+
+    def _chunked_tree_select(
+        self,
+        tree,
+        iids,
+        *,
+        batch_size=250,
+        status_lbl=None,
+        on_complete=None,
+        token_key='sel',
+    ):
+        """Select many rows without blocking the UI thread."""
+        token = self._cancel_chunked_work(token_key)
+        try:
+            tree.selection_set(())
+        except Exception:
+            pass
+        total = len(iids)
+        if not total:
+            if on_complete:
+                on_complete()
+            return
+
+        if animations_disabled():
+            tree.selection_set(*iids)
+            if on_complete:
+                on_complete()
+            return
+
+        if status_lbl is not None:
+            status_lbl.config(text=f'Selecting… 0/{total:,}')
+
+        state = {'idx': 0, 'first': True}
+
+        def pump():
+            if not self._chunk_work_alive(token_key, token):
+                return
+            end = min(state['idx'] + batch_size, total)
+            batch = iids[state['idx']:end]
+            if state['first']:
+                tree.selection_set(*batch)
+                state['first'] = False
+            else:
+                tree.selection_add(*batch)
+            state['idx'] = end
+            if status_lbl is not None:
+                status_lbl.config(
+                    text=f'Selecting… {state["idx"]:,}/{total:,}' if state['idx'] < total else '')
+            if state['idx'] < total:
+                self.after(1, pump)
+            elif on_complete:
+                on_complete()
+
+        self.after(0, pump)
+
+    def _set_archive_busy(self, busy: bool, message: str = ''):
+        state = 'disabled' if busy else 'normal'
+        for attr in ('delete_archive_btn',):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                try:
+                    btn.config(state=state)
+                except Exception:
+                    pass
+        if hasattr(self, 'archive_status_lbl') and message:
+            self.archive_status_lbl.config(text=message)
+
+    def _show_delete_archive_confirm(self, recs, *, title='Delete from Archive', on_confirm):
+        """Summary-only delete confirmation — never dump thousands of paths in a native dialog."""
+        n = len(recs)
+        total_bytes = sum(int(r.get('size') or 0) for r in recs)
+        receipt_n = sum(1 for r in recs if r.get('receipt_path'))
+        dlg = tk.Toplevel(self)
+        dlg.title(title)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.configure(bg=BG)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+        frm = ttk.Frame(dlg, style='Content.TFrame', padding=16)
+        frm.pack(fill='both', expand=True)
+
+        ttk.Label(
+            frm,
+            text=f'Delete {n:,} archived file{"s" if n != 1 else ""}?',
+            style='Header.TLabel',
+        ).pack(anchor='w')
+        summary = (
+            f'Total size: {self._format_size(total_bytes)}\n'
+            f'Receipts available: {"Yes" if receipt_n else "No"}\n\n'
+            'Original live files are not touched.\n'
+            'This permanently removes archived copies from Cleanroom custody.\n'
+            'This cannot be undone.'
+        )
+        ttk.Label(frm, text=summary, style='CardInfo.TLabel', wraplength=420, justify='left').pack(
+            anchor='w', pady=(10, 0))
+
+        btns = ttk.Frame(frm, style='Content.TFrame')
+        btns.pack(fill='x', pady=(16, 0))
+        ttk.Button(
+            btns, text='Show file list…', style='Action.TButton',
+            command=lambda: self._show_delete_file_list(recs, parent=dlg),
+        ).pack(side='left')
+        ttk.Button(btns, text='Cancel', style='Action.TButton', command=dlg.destroy).pack(side='right')
+        ttk.Button(
+            btns, text='Delete from Archive', style='Primary.TButton',
+            command=lambda: (dlg.destroy(), on_confirm()),
+        ).pack(side='right', padx=(0, 8))
+        dlg.geometry('460x260')
+        dlg.minsize(420, 220)
+
+    def _show_delete_file_list(self, recs, *, parent=None):
+        """Scrollable optional file list for large archive delete selections."""
+        dlg = tk.Toplevel(parent or self)
+        dlg.title('Selected archive files')
+        dlg.transient(parent or self)
+        dlg.grab_set()
+        dlg.configure(bg=BG)
+        frm = ttk.Frame(dlg, style='Content.TFrame', padding=12)
+        frm.pack(fill='both', expand=True)
+        ttk.Label(
+            frm,
+            text=f'{len(recs):,} archived file(s)',
+            style='Header.TLabel',
+        ).pack(anchor='w')
+        text_frm = ttk.Frame(frm, style='Content.TFrame')
+        text_frm.pack(fill='both', expand=True, pady=(8, 0))
+        text = tk.Text(
+            text_frm, wrap='none', bg=PREVIEW_BG, fg=TEXT, insertbackground=TEXT,
+            font=('Consolas', 9), height=18, width=72,
+        )
+        vsb = ttk.Scrollbar(text_frm, orient='vertical', command=text.yview)
+        hsb = ttk.Scrollbar(text_frm, orient='horizontal', command=text.xview)
+        text.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        text.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        text_frm.grid_rowconfigure(0, weight=1)
+        text_frm.grid_columnconfigure(0, weight=1)
+        text.config(state='disabled')
+        ttk.Button(frm, text='Close', style='Action.TButton', command=dlg.destroy).pack(anchor='e', pady=(8, 0))
+        dlg.geometry('640x420')
+
+        token = self._cancel_chunked_work('delete_list')
+        state = {'idx': 0}
+        batch = 120
+
+        def pump():
+            if not self._chunk_work_alive('delete_list', token):
+                return
+            end = min(state['idx'] + batch, len(recs))
+            lines = []
+            for r in recs[state['idx']:end]:
+                lines.append(f'{self._format_size(r.get("size", 0))}  {r.get("dest", "")}')
+            text.config(state='normal')
+            text.insert('end', '\n'.join(lines) + ('\n' if end < len(recs) else ''))
+            text.config(state='disabled')
+            text.see('end')
+            state['idx'] = end
+            if state['idx'] < len(recs):
+                self.after(1, pump)
+
+        self.after(0, pump)
+
     def _set_status(self, text, *, pulse=False):
         try:
             self.global_status.config(text=text)
@@ -3812,7 +4069,7 @@ class StartupManagerGUI(ctk.CTk):
 
     def _apply_filter(self):
         q = self.search_text.lower()
-        self.tree.delete(*self.tree.get_children())
+        self._cancel_chunked_work('startup_tree')
 
         def matches(v):
             if not q:
@@ -3855,11 +4112,35 @@ class StartupManagerGUI(ctk.CTk):
 
         key = self.current_sort[0]
         rows.sort(key=lambda item: (item.get(key) or '').lower(), reverse=self.current_sort[1])
-        for idx, v in enumerate(rows):
+
+        def build_row(idx, v):
             tag = 'evenrow' if idx % 2 else 'oddrow'
-            self.tree.insert('', 'end', values=(v['name'], v['source'], v['location'], v['command']), tags=(tag,))
-        self._refresh_empty_hint(self.startup_empty_hint, self.tree)
-        self._update_context_panel()
+            return (str(idx), (v['name'], v['source'], v['location'], v['command']), (tag,))
+
+        def on_complete():
+            self._refresh_empty_hint(self.startup_empty_hint, self.tree)
+            self._update_context_panel()
+
+        if hasattr(self, 'status_lbl') and rows:
+            self.status_lbl.config(text=f'Loading {len(rows):,} entries…')
+
+        def on_done():
+            if hasattr(self, 'status_lbl'):
+                total = len(self.data.get('folders', [])) + len(self.data.get('registry', []))
+                shown = len(rows)
+                self.status_lbl.config(
+                    text=f'{shown:,} shown' if shown != total else f'{total:,} entries')
+            on_complete()
+
+        self._chunked_tree_populate(
+            self.tree,
+            rows,
+            build_row,
+            status_lbl=getattr(self, 'status_lbl', None),
+            empty_hint=self.startup_empty_hint,
+            on_complete=on_done,
+            token_key='startup_tree',
+        )
 
     def _update_actions(self):
         ent = self._selected_entry()
@@ -4108,61 +4389,85 @@ class StartupManagerGUI(ctk.CTk):
     def refresh_activity(self):
         if ledger_module is None or proof_module is None:
             return
-        actions = []
-        if self.restore_log_path.exists() and restore_module:
-            try:
-                actions = restore_module.load_log(str(self.restore_log_path))
-            except Exception:
-                actions = []
-        feed = ledger_module.build_activity_feed(actions)
-        self._activity_feed = feed
-        entries = self._load_log_dicts()
-        custody = proof_module.verify_entries(entries)
-        summary = ledger_module.summarize_feed(feed)
-        trust = ledger_module.trust_score(custody['verified'], custody['total'])
-        tone = ACCENT if trust >= 95 else (SEVERITY_COLORS['medium'] if trust >= 70
-                                           else SEVERITY_COLORS['high'])
-        band = 'VERIFIED' if custody['missing'] == 0 and custody['total'] else (
-            'NO DATA' if custody['total'] == 0 else 'GAPS')
-        self._draw_trust_ring(trust, tone)
-        self.trust_band_lbl.config(text=band, fg=tone)
-        self.trust_sub_lbl.config(
-            text=f"{custody['verified']}/{custody['total']} artifacts on disk · "
-                 f"{self._format_size(custody['bytes_in_custody'])} in custody")
-        self.stat_act_total.config(text=str(summary['total_actions']))
-        self.stat_act_present.config(text=str(summary['present']))
-        self.stat_act_bytes.config(text=self._format_size(custody['bytes_in_custody']))
-        if hasattr(self, 'stat_act_pruned'):
-            self.stat_act_pruned.config(text=self._format_size(summary.get('bytes_pruned', 0)))
-        self.act_status_lbl.config(
-            text=f'Custody trust {trust}%' if custody['total'] else 'Awaiting first action')
-        self._refresh_header_proof_badges()
+        self._cancel_chunked_work('activity_tree')
+        self.act_refresh_btn.config(state='disabled')
+        self.act_status_lbl.config(text='Loading activity ledger…')
 
-        tree = self.activity_tree
-        tree.delete(*tree.get_children())
-        row_idx = 0
-        kind_labels = {'file': 'File', 'registry': 'Registry', 'prune': 'Pruned'}
-        for i, e in enumerate(feed):
-            if e.get('kind') == 'restore':
-                continue
-            when = (e.get('when') or '')[:19].replace('T', ' ')
-            tag = 'present' if e.get('present') else 'missing'
-            if e.get('kind') == 'prune':
-                tag = 'missing'
-            stripe = 'evenrow' if row_idx % 2 else 'oddrow'
-            row_idx += 1
-            status = '✓' if e.get('present') else '✗'
-            tree.insert('', 'end', iid=str(i),
-                        values=(status, when,
-                                kind_labels.get(e.get('kind'), e.get('kind', '')),
-                                e.get('reason', ''), e.get('src', ''),
-                                self._format_size(e.get('size', 0))),
-                        tags=(stripe, tag))
-        if row_idx:
-            self.activity_empty.place_forget()
-        else:
-            self.activity_empty.place(relx=0.5, rely=0.4, anchor='center')
-        self._on_activity_select()
+        log_path = str(self.restore_log_path)
+
+        def work():
+            actions = []
+            if Path(log_path).exists() and restore_module:
+                try:
+                    actions = restore_module.load_log(log_path)
+                except Exception:
+                    actions = []
+            feed = ledger_module.build_activity_feed(actions)
+            entries = [t[3] for t in restore_module.entries_from_log(actions)] if restore_module else []
+            custody = proof_module.verify_entries(entries)
+            summary = ledger_module.summarize_feed(feed)
+            trust = ledger_module.trust_score(custody['verified'], custody['total'])
+            return feed, custody, summary, trust
+
+        def done(result, err):
+            self.act_refresh_btn.config(state='normal')
+            if err is not None:
+                self.act_status_lbl.config(text=f'Load failed: {err}')
+                return
+            feed, custody, summary, trust = result
+            self._activity_feed = feed
+            tone = ACCENT if trust >= 95 else (SEVERITY_COLORS['medium'] if trust >= 70
+                                               else SEVERITY_COLORS['high'])
+            band = 'VERIFIED' if custody['missing'] == 0 and custody['total'] else (
+                'NO DATA' if custody['total'] == 0 else 'GAPS')
+            self._draw_trust_ring(trust, tone)
+            self.trust_band_lbl.config(text=band, fg=tone)
+            self.trust_sub_lbl.config(
+                text=f"{custody['verified']}/{custody['total']} artifacts on disk · "
+                     f"{self._format_size(custody['bytes_in_custody'])} in custody")
+            self.stat_act_total.config(text=str(summary['total_actions']))
+            self.stat_act_present.config(text=str(summary['present']))
+            self.stat_act_bytes.config(text=self._format_size(custody['bytes_in_custody']))
+            if hasattr(self, 'stat_act_pruned'):
+                self.stat_act_pruned.config(text=self._format_size(summary.get('bytes_pruned', 0)))
+            self._refresh_header_proof_badges()
+
+            rows = [(i, e) for i, e in enumerate(feed) if e.get('kind') != 'restore']
+            kind_labels = {'file': 'File', 'registry': 'Registry', 'prune': 'Pruned'}
+
+            def build_row(_j, item):
+                i, e = item
+                when = (e.get('when') or '')[:19].replace('T', ' ')
+                tag = 'present' if e.get('present') else 'missing'
+                if e.get('kind') == 'prune':
+                    tag = 'missing'
+                stripe = 'evenrow' if _j % 2 else 'oddrow'
+                status = '✓' if e.get('present') else '✗'
+                return (
+                    str(i),
+                    (status, when,
+                     kind_labels.get(e.get('kind'), e.get('kind', '')),
+                     e.get('reason', ''), e.get('src', ''),
+                     self._format_size(e.get('size', 0))),
+                    (stripe, tag),
+                )
+
+            def on_complete():
+                self.act_status_lbl.config(
+                    text=f'Custody trust {trust}%' if custody['total'] else 'Awaiting first action')
+                self._on_activity_select()
+
+            self._chunked_tree_populate(
+                self.activity_tree,
+                rows,
+                build_row,
+                status_lbl=self.act_status_lbl,
+                empty_hint=self.activity_empty,
+                on_complete=on_complete,
+                token_key='activity_tree',
+            )
+
+        self._run_bg(work, done)
 
     def open_archive_browser_tab(self):
         self.tab_control.select(self.archive_tab)
@@ -4171,20 +4476,36 @@ class StartupManagerGUI(ctk.CTk):
     def refresh_archive_browser(self):
         if archive_custody is None or restore_module is None:
             return
-        actions = []
-        if self.restore_log_path.exists():
-            try:
-                actions = restore_module.load_log(str(self.restore_log_path))
-            except Exception:
-                actions = []
+        self._cancel_chunked_work('archive_tree')
+        self._cancel_chunked_work('archive_sel')
+        self._set_archive_busy(True, 'Loading archive custody…')
+        log_path = str(self.restore_log_path)
         cfg = self._load_cleanup_config() or {}
         receipt_dir = brand.user_data_dir() / 'receipts'
-        self._archive_records_all = archive_custody.build_archive_records(
-            actions, receipt_dir=receipt_dir, config=cfg)
-        self._archive_stats = archive_custody.summarize_archive_records(self._archive_records_all)
-        self._update_archive_stat_cards()
-        self._apply_archive_view_filters()
-        self._update_context_panel()
+
+        def work():
+            actions = []
+            if Path(log_path).exists():
+                try:
+                    actions = restore_module.load_log(log_path)
+                except Exception:
+                    actions = []
+            records = archive_custody.build_archive_records(
+                actions, receipt_dir=receipt_dir, config=cfg)
+            stats = archive_custody.summarize_archive_records(records)
+            return records, stats
+
+        def done(result, err):
+            self._set_archive_busy(False)
+            if err is not None:
+                self.archive_status_lbl.config(text=f'Load failed: {err}')
+                return
+            self._archive_records_all, self._archive_stats = result
+            self._update_archive_stat_cards()
+            self._apply_archive_view_filters()
+            self._update_context_panel()
+
+        self._run_bg(work, done)
 
     def _update_archive_stat_cards(self):
         stats = getattr(self, '_archive_stats', {}) or {}
@@ -4199,6 +4520,8 @@ class StartupManagerGUI(ctk.CTk):
     def _apply_archive_view_filters(self):
         if archive_custody is None or not hasattr(self, 'archive_tree'):
             return
+        self._cancel_chunked_work('archive_tree')
+        self._cancel_chunked_work('archive_sel')
         records = list(getattr(self, '_archive_records_all', []) or [])
         rank_filter = getattr(self, '_archive_prune_filter', None)
         filt = rank_filter.get() if rank_filter else ''
@@ -4209,41 +4532,51 @@ class StartupManagerGUI(ctk.CTk):
             records = archive_custody.filter_by_search(records, search_var.get())
         self._archive_records = records
 
-        tree = self.archive_tree
-        tree.delete(*tree.get_children())
         rank_tags = {
             archive_custody.PRUNE_SAFE: 'safe',
             archive_custody.PRUNE_REVIEW: 'review',
             archive_custody.PRUNE_KEEP: 'keep',
         }
-        for i, rec in enumerate(records):
+
+        def build_row(i, rec):
             when = (rec.get('when') or '')[:19].replace('T', ' ')
             rp = rec.get('receipt_path')
             rank_tag = rank_tags.get(rec.get('prune_rank'), 'review')
             stripe = 'evenrow' if i % 2 else 'oddrow'
-            tree.insert('', 'end', iid=str(i),
-                        values=(
-                            when,
-                            rec.get('src', ''),
-                            rec.get('dest', ''),
-                            rec.get('reason', ''),
-                            self._format_size(rec.get('size', 0)),
-                            'Yes' if rec.get('restorable') else 'No',
-                            'Yes' if rp else '—',
-                            rec.get('prune_rank', ''),
-                        ),
-                        tags=(rank_tag, stripe))
-        if records:
-            self.archive_empty.place_forget()
-        else:
-            self.archive_empty.place(relx=0.5, rely=0.4, anchor='center')
-        safe_n = sum(1 for r in records if r.get('prune_rank') == archive_custody.PRUNE_SAFE)
-        total_all = len(getattr(self, '_archive_records_all', []) or [])
-        self.archive_status_lbl.config(
-            text=f'Showing {len(records)} of {total_all} archive record(s) · '
-                 f'{safe_n} safe to delete in this view')
-        self._update_archive_stat_cards()
-        self._on_archive_select()
+            return (
+                str(i),
+                (
+                    when,
+                    rec.get('src', ''),
+                    rec.get('dest', ''),
+                    rec.get('reason', ''),
+                    self._format_size(rec.get('size', 0)),
+                    'Yes' if rec.get('restorable') else 'No',
+                    'Yes' if rp else '—',
+                    rec.get('prune_rank', ''),
+                ),
+                (rank_tag, stripe),
+            )
+
+        def on_complete():
+            safe_n = sum(1 for r in records if r.get('prune_rank') == archive_custody.PRUNE_SAFE)
+            total_all = len(getattr(self, '_archive_records_all', []) or [])
+            self.archive_status_lbl.config(
+                text=f'Showing {len(records):,} of {total_all:,} archive record(s) · '
+                     f'{safe_n:,} safe to delete in this view · 0 selected')
+            self._update_archive_stat_cards()
+            self._on_archive_select()
+
+        self._chunked_tree_populate(
+            self.archive_tree,
+            records,
+            build_row,
+            status_lbl=self.archive_status_lbl,
+            empty_hint=self.archive_empty,
+            on_complete=on_complete,
+            token_key='archive_tree',
+            clear_selection=True,
+        )
 
     def _on_archive_select(self):
         if not hasattr(self, '_archive_detail_src'):
@@ -4255,6 +4588,7 @@ class StartupManagerGUI(ctk.CTk):
             self._archive_detail_dest.config(text='Archive: —')
             self._archive_detail_meta.config(text='Select a row to view custody proof and actions.')
             self._archive_detail_rank.config(text='Recommendation: —')
+            self._update_context_panel()
             return
         r = recs[0]
         when = (r.get('when') or '')[:19].replace('T', ' ')
@@ -4277,15 +4611,46 @@ class StartupManagerGUI(ctk.CTk):
         else:
             hint = 'Use the action panel or right-click menu.'
         self._archive_detail_rank.config(text=f'Recommendation: {rank_txt}\n{hint}')
+        self._update_context_panel()
+
+    def _archive_clear_selection(self):
+        try:
+            self.archive_tree.selection_set(())
+        except Exception:
+            pass
+        self._on_archive_select()
 
     def _archive_select_all_safe(self):
         if archive_custody is None:
             return
-        self.archive_tree.selection_set(())
-        for i, rec in enumerate(self._archive_records):
-            if rec.get('prune_rank') == archive_custody.PRUNE_SAFE:
-                self.archive_tree.selection_add(str(i))
-        self._on_archive_select()
+        safe_iids = [
+            str(i) for i, rec in enumerate(self._archive_records)
+            if rec.get('prune_rank') == archive_custody.PRUNE_SAFE
+        ]
+        if not safe_iids:
+            self.archive_status_lbl.config(text='No safe-to-delete items in this view.')
+            self._archive_clear_selection()
+            return
+        self._chunked_tree_select(
+            self.archive_tree,
+            safe_iids,
+            status_lbl=self.archive_status_lbl,
+            on_complete=self._on_archive_select,
+            token_key='archive_sel',
+        )
+
+    def _archive_select_visible(self):
+        iids = [str(i) for i in range(len(self._archive_records))]
+        if not iids:
+            self._archive_clear_selection()
+            return
+        self._chunked_tree_select(
+            self.archive_tree,
+            iids,
+            status_lbl=self.archive_status_lbl,
+            on_complete=self._on_archive_select,
+            token_key='archive_sel',
+        )
 
     def confirm_delete_all_safe(self):
         if archive_custody is None:
@@ -4295,13 +4660,11 @@ class StartupManagerGUI(ctk.CTk):
         if not recs:
             messagebox.showinfo('Delete from Archive', 'No items marked Safe to delete right now.')
             return
-        freed = self._format_size(sum(int(r.get('size') or 0) for r in recs))
-        if not messagebox.askokcancel(
-                'Delete All Safe',
-                f'Delete {len(recs)} archived item(s) marked Safe to delete ({freed})?\n\n'
-                'Original live files are not touched. This cannot be undone.'):
-            return
-        self._run_archive_delete(recs, context='archive')
+        self._show_delete_archive_confirm(
+            recs,
+            title='Delete All Safe',
+            on_confirm=lambda: self._run_archive_delete(recs, context='archive', skip_confirm=True),
+        )
 
     def confirm_delete_older_than(self):
         if archive_custody is None:
@@ -4840,6 +5203,8 @@ class StartupManagerGUI(ctk.CTk):
         menu.add_command(label='Copy original path', command=self._archive_copy_original_path)
         menu.add_separator()
         menu.add_command(label='Select all safe to delete', command=self._archive_select_all_safe)
+        menu.add_command(label='Select visible', command=self._archive_select_visible)
+        menu.add_command(label='Clear selection', command=self._archive_clear_selection)
         menu.add_command(label='Delete all safe…', command=self.confirm_delete_all_safe)
         menu.add_command(label='Delete older than…', command=self.confirm_delete_older_than)
         menu.add_separator()
@@ -4854,7 +5219,7 @@ class StartupManagerGUI(ctk.CTk):
         for idx, enabled in (
             (0, has_sel), (1, has_sel), (3, has_sel), (4, has_sel),
             (5, has_sel), (7, has_sel), (8, has_sel), (10, True),
-            (11, True), (12, True), (14, True),
+            (11, True), (12, True), (13, True), (14, True), (15, True), (17, True),
         ):
             menu.entryconfig(idx, state='normal' if enabled else 'disabled')
         try:
@@ -5155,56 +5520,47 @@ class StartupManagerGUI(ctk.CTk):
         rec = self._restore_row_to_archive_record(idx)
         self._run_archive_delete([rec], context='restore')
 
-    def _run_archive_delete(self, recs, context='archive'):
+    def _run_archive_delete(self, recs, context='archive', *, skip_confirm=False):
         if archive_custody is None:
             messagebox.showerror('Delete from Archive', 'Archive custody module unavailable.')
             return
         if not recs:
             messagebox.showinfo('Delete from Archive', 'Select archived file(s) to delete.')
             return
-        lines = [f'{self._format_size(r.get("size", 0))}  {r.get("dest")}' for r in recs[:15]]
-        if len(recs) > 15:
-            lines.append(f'… and {len(recs) - 15} more')
-        msg = (
-            'This permanently deletes selected files from Cleanroom\'s archive.\n'
-            'Original live files are not touched.\n'
-            'You will not be able to restore these archived copies afterward.\n\n'
-            + '\n'.join(lines)
-        )
-        if not messagebox.askokcancel('Delete from Archive', msg):
+
+        def proceed():
+            log_path = self.restore_log_path
+
+            def work():
+                return archive_custody.apply_prune(
+                    recs, log_path, receipt_dir=brand.user_data_dir() / 'receipts', dry_run=False)
+
+            def done(result, err):
+                if err is not None:
+                    messagebox.showerror('Delete from Archive', str(err))
+                    return
+                n = len(result.get('pruned', []))
+                skipped = result.get('skipped') or []
+                freed = self._format_size(result.get('bytes_pruned', 0))
+                rp = result.get('receipt_path')
+                detail = (f'Deleted {n:,} archived file(s) ({freed}) from custody.\n'
+                          'Original live files were not touched.')
+                if skipped:
+                    detail += f'\n\nSkipped {len(skipped):,} item(s) — see Activity log.'
+                messagebox.showinfo('Delete Receipt', detail)
+                if rp and Path(rp).is_file():
+                    self._view_receipt_file(rp)
+                self.refresh_activity()
+                self.refresh_restore()
+                if context == 'archive':
+                    self.refresh_archive_browser()
+
+            self._run_bg(work, done)
+
+        if skip_confirm:
+            proceed()
             return
-        if not messagebox.askokcancel(
-                'Confirm Delete',
-                f'Delete {len(recs)} archived file(s) from custody?\n\n'
-                'This cannot be undone. A delete receipt will be written.'):
-            return
-
-        log_path = self.restore_log_path
-
-        def work():
-            return archive_custody.apply_prune(
-                recs, log_path, receipt_dir=brand.user_data_dir() / 'receipts', dry_run=False)
-
-        def done(result, err):
-            if err is not None:
-                messagebox.showerror('Delete from Archive', str(err))
-                return
-            n = len(result.get('pruned', []))
-            skipped = result.get('skipped') or []
-            freed = self._format_size(result.get('bytes_pruned', 0))
-            rp = result.get('receipt_path')
-            detail = f'Deleted {n} archived file(s) ({freed}) from custody.\nOriginal live files were not touched.'
-            if skipped:
-                detail += f'\n\nSkipped {len(skipped)} item(s) — see Activity log.'
-            messagebox.showinfo('Delete Receipt', detail)
-            if rp and Path(rp).is_file():
-                self._view_receipt_file(rp)
-            self.refresh_activity()
-            self.refresh_restore()
-            if context == 'archive':
-                self.refresh_archive_browser()
-
-        self._run_bg(work, done)
+        self._show_delete_archive_confirm(recs, on_confirm=proceed)
 
     def prune_archive_dialog(self):
         """Open Archive Browser filtered to Safe to delete recommendations."""
@@ -5641,25 +5997,53 @@ class StartupManagerGUI(ctk.CTk):
             self.restore_entries = []
             self._clear_restore_detail()
             return
-        self.restore_status_lbl.config(text='Loading restore log...')
-        entries = self._load_restore_log()
-        if entries is None:
-            return
+        self.restore_status_lbl.config(text='Loading restore log…')
+        log_path = str(self.restore_log_path)
         filter_text = self.restore_filter_var.get().strip().lower()
-        if filter_text:
-            entries = [e for e in entries if filter_text in (e[0] or '').lower() or filter_text in (e[1] or '').lower()]
-        self.restore_entries = entries
-        self._update_restore_tree()
-        self.refresh_dashboard()
-        self.refresh_activity()
-        self.restore_status_lbl.config(text=f'Loaded {len(entries)} restore entries.')
+
+        def work():
+            entries = restore_module.load_log(log_path)
+            return list(restore_module.entries_from_log(entries))
+
+        def done(result, err):
+            if err is not None:
+                self.restore_status_lbl.config(text=f'Load failed: {err}')
+                messagebox.showerror('Restore error', f'Unable to load restore log:\n{err}')
+                return
+            entries = result
+            if filter_text:
+                entries = [e for e in entries
+                           if filter_text in (e[0] or '').lower() or filter_text in (e[1] or '').lower()]
+            self.restore_entries = entries
+            self._update_restore_tree()
+            self.refresh_dashboard()
+            self.refresh_activity()
+            self.restore_status_lbl.config(text=f'Loaded {len(entries):,} restore entries.')
+
+        if restore_module is None:
+            messagebox.showerror('Restore error', 'Restore module is unavailable.')
+            return
+        self._run_bg(work, done)
 
     def _update_restore_tree(self):
-        self.restore_tree.delete(*self.restore_tree.get_children())
-        for idx, (src, dest, ts, entry) in enumerate(self.restore_entries):
+        entries = self.restore_entries
+
+        def build_row(idx, item):
+            src, dest, ts, _entry = item
             tag = 'evenrow' if idx % 2 else 'oddrow'
-            self.restore_tree.insert('', 'end', values=(src, dest, ts or ''), tags=(tag,))
-        self._refresh_empty_hint(self.restore_empty_hint, self.restore_tree)
+            return (str(idx), (src, dest, ts or ''), (tag,))
+
+        def on_complete():
+            self._refresh_empty_hint(self.restore_empty_hint, self.restore_tree)
+
+        self._chunked_tree_populate(
+            self.restore_tree,
+            entries,
+            build_row,
+            empty_hint=self.restore_empty_hint,
+            on_complete=on_complete,
+            token_key='restore_tree',
+        )
 
     def _selected_restore_index(self):
         sel = self.restore_tree.selection()
