@@ -5,7 +5,7 @@ import brand
 import customtkinter as ctk
 from ui import ctk_theme
 from ui.launcher import run_launch_splash
-from ui.window_geometry import apply_window_geometry, bind_window_tracking, animations_disabled, MAX_SIZE
+from ui.window_geometry import apply_window_geometry, bind_window_tracking, animations_disabled, MAX_SIZE, MIN_SIZE
 from ui.receipt_animation import (
     ReceiptPrinterPanel,
     DEFAULT_LINES,
@@ -513,9 +513,17 @@ class StartupManagerGUI(ctk.CTk):
                 self._hdr_badges.grid(row=0, column=0, sticky='w')
                 self._hdr_hero.grid(row=0, column=1, sticky='e', padx=(8, 0), pady=0)
         if hasattr(self, '_body_grid'):
-            center_w = min(MAX_SIZE[0], max(920, w - 48))
+            if w > MAX_SIZE[0] + 32:
+                center_w = MAX_SIZE[0]
+                self._body_center.grid(row=0, column=1, columnspan=1, sticky='ns')
+                self._body_grid.grid_columnconfigure(0, weight=1)
+                self._body_grid.grid_columnconfigure(1, weight=0, minsize=center_w)
+                self._body_grid.grid_columnconfigure(2, weight=1)
+            else:
+                center_w = max(MIN_SIZE[0], w - 12)
+                self._body_center.grid(row=0, column=0, columnspan=3, sticky='nsew')
+                self._body_grid.grid_columnconfigure(1, weight=0, minsize=0)
             self._body_center.configure(width=center_w)
-            self._body_grid.grid_columnconfigure(1, minsize=center_w)
         tree_rows = max(5, min(14, (h - 380) // 26))
         if hasattr(self, 'cleanup_tree'):
             path_w = max(160, min(520, (getattr(self, '_body_center', None) or self).winfo_width() - 300))
@@ -766,13 +774,10 @@ class StartupManagerGUI(ctk.CTk):
         host = parent or self
         top = ctk_theme.frame(host, BG)
         top.pack(fill='x', padx=12, pady=(6, 2))
+        self._hdr_top = top
 
-        head_row = ctk_theme.frame(top, BG)
-        head_row.pack(fill='x')
-        brand_col = ctk_theme.frame(head_row, BG)
-        brand_col.pack(side='left', fill='x', expand=True)
-        title_row = ctk_theme.frame(brand_col, BG)
-        title_row.pack(anchor='w')
+        title_row = ctk_theme.frame(top, BG)
+        title_row.pack(fill='x', anchor='w')
         self._logo_photo = self._load_logo(40)
         if self._logo_photo is not None:
             tk.Label(title_row, image=self._logo_photo, bg=BG).pack(side='left', padx=(0, 10))
@@ -783,11 +788,12 @@ class StartupManagerGUI(ctk.CTk):
         ctk_theme.label(title_text, brand.APP_MOTTO, text_color=ACCENT,
                         font_size=11, weight='bold').pack(anchor='w')
         self._hdr_tagline_lbl = ctk_theme.label(
-            brand_col, brand.APP_TAGLINE, text_color=MUTED, font_size=10, wraplength=720)
+            top, brand.APP_TAGLINE, text_color=MUTED, font_size=10, wraplength=720)
         self._hdr_tagline_lbl.pack(anchor='w', pady=(2, 0))
 
-        toolbar_inner = ctk_theme.frame(head_row, BG)
-        toolbar_inner.pack(side='right', anchor='ne')
+        self._hdr_toolbar = ctk_theme.frame(top, BG)
+        self._hdr_toolbar.pack(fill='x', anchor='w', pady=(4, 0))
+        toolbar_inner = self._hdr_toolbar
         self.tb_scan = ctk_theme.button(
             toolbar_inner, '🔍 Scan', self.refresh_cleanup,
             fg_color=HEAD_BG, hover_color=ACCENT_SOFT, text_color=TEXT)

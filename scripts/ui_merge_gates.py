@@ -19,10 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 GEOMETRIES = (
-    (1280, 760, '1280x760-default'),
-    (1240, 760, '1240x760'),
-    (1366, 768, '1366x768'),
-    (1920, 1080, '1920x1080'),
+    (1080, 700, '1080x700-default'),
+    (1050, 680, '1050x680'),
+    (920, 580, '920x580-min'),
+    (1920, 1080, '1920x1080-ultrawide'),
 )
 
 TAB_ACTION_CHECKS = (
@@ -193,13 +193,13 @@ def run_scaling_gates(tk_scaling: float = 1.0) -> int:
 
         if tk_scaling != 1.0:
             label = f'150pct-tk-scaling-{tk_scaling}'
-            issues = check_layout(app, 1240, 760, label, check_settings=True)
+            issues = check_layout(app, 1080, 700, label, check_settings=True)
             if issues:
                 all_issues.extend(issues)
                 for i in issues:
                     _fail(i)
             else:
-                _ok(f'150% tk scaling layout gate passed at 1240x760 (scaling={tk_scaling})')
+                _ok(f'150% tk scaling layout gate passed at 1080x700 (scaling={tk_scaling})')
     finally:
         app.destroy()
 
@@ -207,7 +207,7 @@ def run_scaling_gates(tk_scaling: float = 1.0) -> int:
         print(f'\nScaling gate FAILED ({len(all_issues)} issue(s))', file=sys.stderr)
         return 1
     scale_note = f', tk scaling={tk_scaling}' if tk_scaling != 1.0 else ''
-    print(f'\nScaling gate PASSED (1280x760 default, 1240x760, 1366x768, 1920x1080{scale_note})')
+    print(f'\nScaling gate PASSED (1080x700 default, 1050x680, 920x580-min, 1920x1080-ultrawide{scale_note})')
     return 0
 
 
