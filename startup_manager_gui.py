@@ -675,6 +675,8 @@ class StartupManagerGUI(ctk.CTk):
             self._layout_archive_split(w)
         if hasattr(self, '_layout_startup_split'):
             self._layout_startup_split(w)
+        if hasattr(self, '_layout_activity_split'):
+            self._layout_activity_split(w)
         if hasattr(self, '_uninst_quiet_cb'):
             compact_uninst = w < 980
             if compact_uninst:
@@ -752,6 +754,35 @@ class StartupManagerGUI(ctk.CTk):
             left.pack(side='left', fill='both', expand=True)
             right.pack(side='left', fill='y', padx=(8, 0))
             right.pack_propagate(False)
+
+    def _layout_activity_split(self, window_width):
+        if not hasattr(self, '_activity_container'):
+            return
+        try:
+            content_w = self.tab_control.winfo_width()
+        except Exception:
+            content_w = max(window_width - 260, 640)
+        mode = 'stacked' if content_w < 980 else 'wide'
+        detail_w = max(260, min(340, int(content_w * 0.34)))
+        if hasattr(self, '_activity_detail_panel'):
+            self._activity_detail_panel.configure(width=detail_w)
+        for attr in ('_act_detail_src', '_act_detail_dest', '_act_detail_hint',
+                     '_act_detail_type', '_act_detail_when', '_act_detail_custody'):
+            if hasattr(self, attr):
+                getattr(self, attr).configure(wraplength=max(180, detail_w - 24))
+        if mode == getattr(self, '_activity_split_mode', None):
+            return
+        self._activity_split_mode = mode
+        tree = self._activity_tree_card
+        detail = self._activity_detail_panel
+        tree.grid_forget()
+        detail.grid_forget()
+        if mode == 'stacked':
+            tree.grid(row=0, column=0, sticky='nsew')
+            detail.grid(row=1, column=0, sticky='ew', pady=(8, 0))
+        else:
+            tree.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+            detail.grid(row=0, column=1, sticky='ns')
 
     def _layout_startup_split(self, window_width):
         if not hasattr(self, '_startup_container'):
@@ -1433,8 +1464,31 @@ class StartupManagerGUI(ctk.CTk):
             height=200,
         )
         self.receipt_printer.grid(row=0, column=1, sticky='ns', padx=(8, 0))
+        self.receipt_printer.show_idle('Select a recommendation to view proof details.')
+        rec_actions = ttk.Frame(rec_left, style='Card.TFrame')
+        rec_actions.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(6, 0))
+        self._rec_btn_primary = ttk.Button(rec_actions, text='Take action', style='Primary.TButton',
+                                           command=self._recommendation_primary_action)
+        self._rec_btn_primary.pack(side='left')
+        self._rec_btn_copy = ttk.Button(rec_actions, text='Copy details', style='Action.TButton',
+                                        command=self._recommendation_copy_details)
+        self._rec_btn_copy.pack(side='left', padx=(8, 0))
+        self._rec_status_lbl = ttk.Label(rec_actions, text='Read-only guidance — select a row.',
+                                         style='Info.TLabel')
+        self._rec_status_lbl.pack(side='left', padx=(12, 0))
+        self._dashboard_recommendations = []
         for sev, color in SEVERITY_COLORS.items():
-            self.rec_tree.tag_configure(sev, foreground=color)
+            fg = color if sev == 'high' else (MUTED if sev == 'info' else TEXT)
+            self.rec_tree.tag_configure(sev, foreground=fg)
+        self.rec_tree.tag_configure('oddrow', background=CARD_BG)
+        self.rec_tree.tag_configure('evenrow', background=ROW_ALT)
+        self._bind_selectable_table(
+            self.rec_tree,
+            on_select=self._on_recommendation_select,
+            on_double=self._on_recommendation_double_click,
+            on_right=self._on_recommendation_right_click,
+        )
+        self._rec_context_menu = None
         self.rec_empty_hint = self._make_empty_hint(
             self.rec_tree,
             'No findings yet.\n\n'
@@ -1506,33 +1560,92 @@ class StartupManagerGUI(ctk.CTk):
                    command=self.export_audit).pack(side='left', padx=6)
         ttk.Button(bar, text='Open Archive Tab', style='Action.TButton',
                    command=self.open_archive_browser_tab).pack(side='left', padx=6)
-        ttk.Label(self.activity_tab, text='Every row is a real archived artifact — ✓ means it\'s still on disk.',
+        ttk.Label(self.activity_tab, text='Select a row to view custody proof and available actions.',
                   style='Info.TLabel', wraplength=720).pack(fill='x', padx=10, pady=(0, 4))
 
         self.act_sub_notebook = None
-        wrap = ttk.Frame(self.activity_tab, style='Card.TFrame')
-        wrap.pack(fill='both', expand=True, padx=10, pady=(0, 10))
-        cols = ('status', 'when', 'reason', 'source', 'size')
-        self.activity_tree = ttk.Treeview(wrap, columns=cols, show='headings', selectmode='browse')
-        for c, label, w in (('status', '', 36), ('when', 'When', 140), ('reason', 'Reason', 130),
-                            ('source', 'Source', 320), ('size', 'Size', 80)):
+        self._activity_container = ttk.Frame(self.activity_tab, style='Card.TFrame')
+        self._activity_container.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        self._activity_container.grid_rowconfigure(0, weight=1)
+        self._activity_container.grid_columnconfigure(0, weight=1)
+
+        tree_card = ttk.Frame(self._activity_container, style='Card.TFrame')
+        self._activity_tree_card = tree_card
+        tree_card.grid(row=0, column=0, sticky='nsew')
+        tree_card.grid_rowconfigure(0, weight=1)
+        tree_card.grid_columnconfigure(0, weight=1)
+        cols = ('status', 'when', 'type', 'reason', 'source', 'size')
+        self.activity_tree = ttk.Treeview(tree_card, columns=cols, show='headings', selectmode='browse')
+        for c, label, w in (
+            ('status', 'Custody', 64), ('when', 'When', 132), ('type', 'Type', 72),
+            ('reason', 'Reason', 110), ('source', 'Source / path', 280), ('size', 'Size', 72),
+        ):
             self.activity_tree.heading(c, text=label)
-            anchor = 'center' if c in ('status', 'size') else 'w'
+            anchor = 'center' if c in ('status', 'size', 'type') else 'w'
             self.activity_tree.column(c, width=w, anchor=anchor, stretch=False)
-        vsb = ttk.Scrollbar(wrap, orient='vertical', command=self.activity_tree.yview)
-        hsb = ttk.Scrollbar(wrap, orient='horizontal', command=self.activity_tree.xview)
+        vsb = ttk.Scrollbar(tree_card, orient='vertical', command=self.activity_tree.yview)
+        hsb = ttk.Scrollbar(tree_card, orient='horizontal', command=self.activity_tree.xview)
         self.activity_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        wrap.grid_rowconfigure(0, weight=1)
-        wrap.grid_columnconfigure(0, weight=1)
-        self.activity_tree.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
-        self.activity_tree.tag_configure('present', foreground=ACCENT)
-        self.activity_tree.tag_configure('missing', foreground=SEVERITY_COLORS['high'])
+        self.activity_tree.grid(row=0, column=0, sticky='nsew', padx=8, pady=8)
+        vsb.grid(row=0, column=1, sticky='ns', pady=8)
+        hsb.grid(row=1, column=0, sticky='ew', padx=8)
+        self.activity_tree.tag_configure('oddrow', background=CARD_BG)
+        self.activity_tree.tag_configure('evenrow', background=ROW_ALT)
+        self.activity_tree.tag_configure('present', foreground=TEXT)
+        self.activity_tree.tag_configure('missing', foreground=MUTED)
         self.activity_empty = self._make_empty_hint(
             self.activity_tree, 'No Cleanroom actions logged yet.\n'
                                 'Run a cleanup — every move will appear here with proof status.')
         self._activity_feed = []
+        self._activity_split_mode = None
+
+        self._activity_detail_panel = ttk.Frame(self._activity_container, style='Card.TFrame')
+        self._activity_detail_panel.grid(row=0, column=1, sticky='ns')
+        act_detail = ttk.Frame(self._activity_detail_panel, style='Card.TFrame')
+        act_detail.pack(fill='both', expand=True, padx=12, pady=12)
+        ttk.Label(act_detail, text='Proof details', font=('Segoe UI', 11, 'bold'),
+                  background=CARD_BG).pack(anchor='w', pady=(0, 8))
+        self._act_detail_type = ttk.Label(act_detail, text='—', style='CardInfo.TLabel', wraplength=280)
+        self._act_detail_when = ttk.Label(act_detail, text='—', style='CardInfo.TLabel', wraplength=280)
+        self._act_detail_custody = ttk.Label(act_detail, text='—', style='CardInfo.TLabel', wraplength=280)
+        self._act_detail_src = ttk.Label(act_detail, text='—', style='CardInfo.TLabel', wraplength=280, justify='left')
+        self._act_detail_dest = ttk.Label(act_detail, text='—', style='CardInfo.TLabel', wraplength=280, justify='left')
+        self._act_detail_hint = ttk.Label(act_detail, text='Select a ledger row to view proof details.',
+                                            style='CardInfo.TLabel', wraplength=280, justify='left',
+                                            foreground=ACCENT)
+        for lbl in (self._act_detail_type, self._act_detail_when, self._act_detail_custody,
+                    self._act_detail_src, self._act_detail_dest, self._act_detail_hint):
+            lbl.pack(anchor='w', pady=(0, 6))
+
+        act_btns = ttk.Frame(act_detail, style='Card.TFrame')
+        act_btns.pack(fill='x', pady=(8, 0))
+        act_btns.columnconfigure(0, weight=1)
+        act_btns.columnconfigure(1, weight=1)
+        self._act_btn_receipt = ttk.Button(act_btns, text='Open Receipt', style='Action.TButton',
+                                          command=self._activity_open_receipt)
+        self._act_btn_archive = ttk.Button(act_btns, text='Open Archive', style='Action.TButton',
+                                           command=self._activity_open_archive)
+        self._act_btn_copy = ttk.Button(act_btns, text='Copy Path', style='Action.TButton',
+                                        command=self._activity_copy_path)
+        self._act_btn_proof = ttk.Button(act_btns, text='Copy Proof', style='Action.TButton',
+                                         command=self._activity_copy_proof)
+        self._act_btn_verify = ttk.Button(act_btns, text='Verify Custody', style='Action.TButton',
+                                          command=self.verify_custody)
+        self._act_btn_restore = ttk.Button(act_btns, text='Restore', style='Action.TButton',
+                                           command=self._activity_restore_selected)
+        for i, btn in enumerate((
+            self._act_btn_receipt, self._act_btn_archive, self._act_btn_copy,
+            self._act_btn_proof, self._act_btn_verify, self._act_btn_restore,
+        )):
+            btn.grid(row=i // 2, column=i % 2, sticky='ew', padx=2, pady=2)
+
+        self._bind_selectable_table(
+            self.activity_tree,
+            on_select=self._on_activity_select,
+            on_double=self._on_activity_double_click,
+            on_right=self._on_activity_right_click,
+        )
+        self._activity_context_menu = None
 
     def _build_archive_tab(self):
         """Dedicated archive custody manager — browse, restore, delete."""
@@ -1650,14 +1763,20 @@ class StartupManagerGUI(ctk.CTk):
         hsb.grid(row=1, column=0, sticky='ew')
         tree_wrap.grid_rowconfigure(0, weight=1)
         tree_wrap.grid_columnconfigure(0, weight=1)
-        self.archive_tree.tag_configure('safe', foreground=ACCENT)
-        self.archive_tree.tag_configure('review', foreground=SEVERITY_COLORS['medium'])
+        self.archive_tree.tag_configure('safe', foreground=TEXT)
+        self.archive_tree.tag_configure('review', foreground=TEXT)
         self.archive_tree.tag_configure('keep', foreground=MUTED)
+        self.archive_tree.tag_configure('oddrow', background=CARD_BG)
+        self.archive_tree.tag_configure('evenrow', background=ROW_ALT)
         self.archive_empty = self._make_empty_hint(
             self.archive_tree, 'No archive custody records yet.\n'
                                 'Run Cleaner → Archive & Clean — evidence appears here.')
-        self.archive_tree.bind('<<TreeviewSelect>>', lambda e: self._on_archive_select())
-        self.archive_tree.bind('<Button-3>', self._on_archive_right_click)
+        self._bind_selectable_table(
+            self.archive_tree,
+            on_select=self._on_archive_select,
+            on_double=self._on_archive_double_click,
+            on_right=self._on_archive_right_click,
+        )
         self._archive_records_all = []
         self._archive_records = []
         self._archive_stats = {}
@@ -4021,6 +4140,8 @@ class StartupManagerGUI(ctk.CTk):
 
         tree = self.activity_tree
         tree.delete(*tree.get_children())
+        row_idx = 0
+        kind_labels = {'file': 'File', 'registry': 'Registry', 'prune': 'Pruned'}
         for i, e in enumerate(feed):
             if e.get('kind') == 'restore':
                 continue
@@ -4028,15 +4149,20 @@ class StartupManagerGUI(ctk.CTk):
             tag = 'present' if e.get('present') else 'missing'
             if e.get('kind') == 'prune':
                 tag = 'missing'
+            stripe = 'evenrow' if row_idx % 2 else 'oddrow'
+            row_idx += 1
+            status = '✓' if e.get('present') else '✗'
             tree.insert('', 'end', iid=str(i),
-                        values=('✓' if e.get('present') else '✗', when,
+                        values=(status, when,
+                                kind_labels.get(e.get('kind'), e.get('kind', '')),
                                 e.get('reason', ''), e.get('src', ''),
                                 self._format_size(e.get('size', 0))),
-                        tags=(tag,))
-        if any(e.get('kind') not in ('restore',) for e in feed):
+                        tags=(stripe, tag))
+        if row_idx:
             self.activity_empty.place_forget()
         else:
             self.activity_empty.place(relx=0.5, rely=0.4, anchor='center')
+        self._on_activity_select()
 
     def open_archive_browser_tab(self):
         self.tab_control.select(self.archive_tab)
@@ -4093,6 +4219,8 @@ class StartupManagerGUI(ctk.CTk):
         for i, rec in enumerate(records):
             when = (rec.get('when') or '')[:19].replace('T', ' ')
             rp = rec.get('receipt_path')
+            rank_tag = rank_tags.get(rec.get('prune_rank'), 'review')
+            stripe = 'evenrow' if i % 2 else 'oddrow'
             tree.insert('', 'end', iid=str(i),
                         values=(
                             when,
@@ -4104,7 +4232,7 @@ class StartupManagerGUI(ctk.CTk):
                             'Yes' if rp else '—',
                             rec.get('prune_rank', ''),
                         ),
-                        tags=(rank_tags.get(rec.get('prune_rank'), 'review'),))
+                        tags=(rank_tag, stripe))
         if records:
             self.archive_empty.place_forget()
         else:
@@ -4125,20 +4253,30 @@ class StartupManagerGUI(ctk.CTk):
         if not recs:
             self._archive_detail_src.config(text='Original: —')
             self._archive_detail_dest.config(text='Archive: —')
-            self._archive_detail_meta.config(text='Select one or more items from the list.')
+            self._archive_detail_meta.config(text='Select a row to view custody proof and actions.')
             self._archive_detail_rank.config(text='Recommendation: —')
             return
         r = recs[0]
         when = (r.get('when') or '')[:19].replace('T', ' ')
         self._archive_detail_src.config(text=f'Original:\n{r.get("src", "—")}')
         self._archive_detail_dest.config(text=f'Archive:\n{r.get("dest", "—")}')
+        custody = 'Verified on disk ✓' if r.get('restorable') else 'Not found on disk ✗'
         extra = f'{len(recs)} selected · {self._format_size(sum(int(x.get("size") or 0) for x in recs))}'
         if len(recs) == 1:
-            extra = f'{when} · {r.get("reason", "—")} · {self._format_size(r.get("size", 0))}'
+            extra = (f'{when} · {r.get("reason", "—")} · {self._format_size(r.get("size", 0))}\n'
+                     f'{custody}')
         self._archive_detail_meta.config(text=extra)
         ranks = {x.get('prune_rank') for x in recs}
         rank_txt = ranks.pop() if len(ranks) == 1 else 'Mixed recommendations'
-        self._archive_detail_rank.config(text=f'Recommendation: {rank_txt}')
+        if archive_custody and rank_txt == archive_custody.PRUNE_SAFE:
+            hint = 'Safe to delete after review — original files stay untouched.'
+        elif archive_custody and rank_txt == archive_custody.PRUNE_REVIEW:
+            hint = 'Review carefully before deleting from archive.'
+        elif archive_custody and rank_txt == archive_custody.PRUNE_KEEP:
+            hint = 'Keep in custody — recent or protected item.'
+        else:
+            hint = 'Use the action panel or right-click menu.'
+        self._archive_detail_rank.config(text=f'Recommendation: {rank_txt}\n{hint}')
 
     def _archive_select_all_safe(self):
         if archive_custody is None:
@@ -4311,6 +4449,365 @@ class StartupManagerGUI(ctk.CTk):
             self._set_status('Path copied to clipboard.')
         except tk.TclError:
             messagebox.showinfo('Copy Path', text)
+
+    def _bind_selectable_table(self, tree, *, on_select, on_double=None, on_right=None):
+        """Wire standard table selection: click, keyboard, double-click, right-click."""
+        tree.bind('<<TreeviewSelect>>', lambda e: on_select())
+        if on_double:
+            tree.bind('<Double-Button-1>', on_double)
+        if on_right:
+            tree.bind('<Button-3>', on_right)
+        for key in ('<Up>', '<Down>', '<Prior>', '<Next>'):
+            tree.bind(key, lambda e: self.after_idle(on_select))
+
+        def _click(_event):
+            sel = tree.selection()
+            if sel:
+                try:
+                    tree.focus(sel[0])
+                except Exception:
+                    pass
+            self.after_idle(on_select)
+
+        tree.bind('<Button-1>', _click, add='+')
+
+    def _set_btn_state(self, btn, enabled: bool, tip: str = ''):
+        if btn is None:
+            return
+        try:
+            btn.config(state='normal' if enabled else 'disabled')
+        except Exception:
+            pass
+        if tip:
+            self._add_tooltip(btn, tip)
+
+    def _selected_activity_entry(self):
+        sel = self.activity_tree.selection() if hasattr(self, 'activity_tree') else ()
+        if not sel:
+            return None
+        try:
+            idx = int(sel[0])
+            if 0 <= idx < len(self._activity_feed):
+                return self._activity_feed[idx]
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    def _find_receipt_for_paths(self, src, dest):
+        for rec in getattr(self, '_archive_records_all', []) or []:
+            if rec.get('src') == src and rec.get('dest') == dest:
+                rp = rec.get('receipt_path')
+                if rp and Path(rp).is_file():
+                    return Path(rp)
+        return None
+
+    def _activity_proof_lines(self, entry):
+        if not entry:
+            return [], ''
+        when = (entry.get('when') or '')[:19].replace('T', ' ')
+        kind = entry.get('kind') or 'file'
+        present = bool(entry.get('present'))
+        custody = 'Verified on disk' if present else 'Missing from custody'
+        lines = [
+            'ACTIVITY PROOF',
+            f'When: {when}',
+            f'Type: {kind}',
+            f'Status: {custody}',
+            f'Reason: {entry.get("reason") or "—"}',
+            f'Size: {self._format_size(entry.get("size", 0))}',
+        ]
+        src = entry.get('src') or '—'
+        dest = entry.get('dest') or '—'
+        if len(src) > 42:
+            src = src[:39] + '…'
+        if len(dest) > 42:
+            dest = dest[:39] + '…'
+        lines.append(f'From: {src}')
+        lines.append(f'Custody: {dest}')
+        stamp = 'VERIFIED ✓' if present else 'MISSING ✗'
+        return lines[:8], stamp
+
+    def _on_activity_select(self):
+        entry = self._selected_activity_entry()
+        if not entry:
+            self._act_detail_type.config(text='Type: —')
+            self._act_detail_when.config(text='When: —')
+            self._act_detail_custody.config(text='Custody: —')
+            self._act_detail_src.config(text='Source: —')
+            self._act_detail_dest.config(text='Archive path: —')
+            self._act_detail_hint.config(
+                text='Select a ledger row to view proof details and available actions.')
+            for btn in (self._act_btn_receipt, self._act_btn_archive, self._act_btn_copy,
+                        self._act_btn_proof, self._act_btn_restore):
+                self._set_btn_state(btn, False)
+            self._set_btn_state(self._act_btn_verify, True, 'Audit all archived artifacts on disk.')
+            return
+
+        when = (entry.get('when') or '')[:19].replace('T', ' ')
+        kind = entry.get('kind') or 'file'
+        present = bool(entry.get('present'))
+        self._act_detail_type.config(text=f'Type: {kind}')
+        self._act_detail_when.config(text=f'When: {when}')
+        self._act_detail_custody.config(
+            text=f'Custody: {"Verified on disk ✓" if present else "Missing from archive ✗"}')
+        self._act_detail_src.config(text=f'Source:\n{entry.get("src") or "—"}')
+        self._act_detail_dest.config(text=f'Archive path:\n{entry.get("dest") or "—"}')
+        if entry.get('kind') == 'prune':
+            self._act_detail_hint.config(text='Historical proof only — this archive copy was pruned.')
+        elif present:
+            self._act_detail_hint.config(text='Artifact verified in custody. Restore or open receipt below.')
+        else:
+            self._act_detail_hint.config(text='Artifact missing — review custody or restore from backup.')
+
+        rp = self._find_receipt_for_paths(entry.get('src'), entry.get('dest'))
+        self._set_btn_state(self._act_btn_receipt, bool(rp),
+                            'Open linked Cleanroom Receipt.' if rp else 'No receipt file linked to this row.')
+        self._set_btn_state(self._act_btn_archive, bool(entry.get('dest')),
+                            'Open the archive folder in Explorer.')
+        self._set_btn_state(self._act_btn_copy, bool(entry.get('dest') or entry.get('src')),
+                            'Copy archive path to clipboard.')
+        self._set_btn_state(self._act_btn_proof, True, 'Copy proof summary text to clipboard.')
+        self._set_btn_state(self._act_btn_verify, True, 'Run a full custody audit.')
+        can_restore = present and entry.get('kind') not in ('prune', 'restore')
+        self._set_btn_state(self._act_btn_restore, can_restore,
+                            'Restore this archived copy to its original path.' if can_restore
+                            else 'Restore unavailable for this record.')
+        self._update_context_panel()
+
+    def _on_activity_double_click(self, _event=None):
+        entry = self._selected_activity_entry()
+        if not entry:
+            return
+        rp = self._find_receipt_for_paths(entry.get('src'), entry.get('dest'))
+        if rp:
+            self._view_receipt_file(rp)
+        elif entry.get('present') and entry.get('dest'):
+            self._activity_open_archive()
+        else:
+            self._activity_copy_proof()
+
+    def _ensure_activity_context_menu(self):
+        if self._activity_context_menu is not None:
+            return
+        menu = self._tree_context_menu(self.activity_tree)
+        menu.add_command(label='Open Receipt', command=self._activity_open_receipt)
+        menu.add_command(label='Open Archive Folder', command=self._activity_open_archive)
+        menu.add_command(label='Copy archive path', command=self._activity_copy_path)
+        menu.add_command(label='Copy proof details', command=self._activity_copy_proof)
+        menu.add_separator()
+        menu.add_command(label='Restore', command=self._activity_restore_selected)
+        menu.add_command(label='Verify Custody', command=self.verify_custody)
+        menu.add_separator()
+        menu.add_command(label='Open Archive Tab', command=self.open_archive_browser_tab)
+        menu.add_command(label='Refresh', command=self.refresh_activity)
+        self._activity_context_menu = menu
+
+    def _on_activity_right_click(self, event):
+        self._tree_right_click_select(self.activity_tree, event)
+        self._on_activity_select()
+        self._ensure_activity_context_menu()
+        entry = self._selected_activity_entry()
+        menu = self._activity_context_menu
+        rp = self._find_receipt_for_paths(
+            entry.get('src') if entry else None, entry.get('dest') if entry else None)
+        has = entry is not None
+        for idx, enabled in ((0, bool(rp)), (1, has and bool(entry.get('dest'))),
+                             (2, has), (3, has), (5, has and entry.get('present')),
+                             (6, True), (8, True), (9, True)):
+            menu.entryconfig(idx, state='normal' if enabled else 'disabled')
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return 'break'
+
+    def _activity_open_receipt(self):
+        entry = self._selected_activity_entry()
+        if not entry:
+            return
+        rp = self._find_receipt_for_paths(entry.get('src'), entry.get('dest'))
+        if rp:
+            self._view_receipt_file(rp)
+        else:
+            messagebox.showinfo('Activity Ledger', 'No linked receipt file for this row.')
+
+    def _activity_open_archive(self):
+        entry = self._selected_activity_entry()
+        if not entry or not entry.get('dest'):
+            return
+        dest = Path(entry['dest'])
+        folder = dest if dest.is_dir() else dest.parent
+        if folder.exists():
+            os.startfile(str(folder))
+        else:
+            messagebox.showinfo('Activity Ledger', f'Archive path not found:\n{dest}')
+
+    def _activity_copy_path(self):
+        entry = self._selected_activity_entry()
+        if not entry:
+            return
+        text = entry.get('dest') or entry.get('src') or ''
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._set_status('Path copied to clipboard.')
+        except tk.TclError:
+            messagebox.showinfo('Copy Path', text)
+
+    def _activity_copy_proof(self):
+        entry = self._selected_activity_entry()
+        if not entry:
+            return
+        lines, stamp = self._activity_proof_lines(entry)
+        text = '\n'.join(lines) + (f'\n\n{stamp}' if stamp else '')
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._set_status('Proof details copied.')
+        except tk.TclError:
+            messagebox.showinfo('Proof Details', text)
+
+    def _activity_restore_selected(self):
+        entry = self._selected_activity_entry()
+        if not entry or not entry.get('present'):
+            messagebox.showinfo('Restore', 'Select a restorable archive row first.')
+            return
+        if entry.get('kind') in ('prune', 'restore'):
+            messagebox.showinfo('Restore', 'This historical record cannot be restored from here.')
+            return
+        success, msg = self._smart_restore(entry['src'], entry['dest'], apply=True)
+        if success:
+            self._set_status('Restore complete.')
+            self.refresh_activity()
+            self.refresh_restore()
+        else:
+            messagebox.showerror('Restore', msg or 'Restore failed.')
+
+    def _selected_recommendation(self):
+        sel = self.rec_tree.selection() if hasattr(self, 'rec_tree') else ()
+        if not sel:
+            return None
+        try:
+            idx = int(sel[0])
+            recs = getattr(self, '_dashboard_recommendations', [])
+            if 0 <= idx < len(recs):
+                return recs[idx]
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    def _recommendation_primary_action(self):
+        rec = self._selected_recommendation()
+        if not rec:
+            messagebox.showinfo('Recommendations', 'Select a recommendation row first.')
+            return
+        title = (rec.get('title') or '').lower()
+        if 'archive' in title and 'candidate' in title:
+            self._navigate_to_tab(3)
+        elif 'no cleanup' in title or 're-scan' in (rec.get('detail') or '').lower():
+            self.refresh_cleanup()
+        elif 'registry' in title or 'startup' in title:
+            self._navigate_to_tab(2)
+        elif 'schedule' in title:
+            self.schedule_optimization()
+        elif 'restore history' in title:
+            self._navigate_to_tab(5)
+        else:
+            self._recommendation_copy_details()
+
+    def _recommendation_copy_details(self):
+        rec = self._selected_recommendation()
+        if not rec:
+            return
+        text = f"{rec.get('title', '')}\n\n{rec.get('detail', '')}\n\nPriority: {rec.get('severity', 'info')}"
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._set_status('Recommendation copied.')
+        except tk.TclError:
+            messagebox.showinfo('Recommendation', text)
+
+    def _on_recommendation_select(self):
+        rec = self._selected_recommendation()
+        if not rec:
+            if hasattr(self, 'receipt_printer'):
+                self.receipt_printer.show_idle('Select a recommendation to view proof details.')
+            self._rec_status_lbl.config(text='Read-only guidance — select a row.')
+            self._set_btn_state(self._rec_btn_primary, False)
+            self._set_btn_state(self._rec_btn_copy, False)
+            return
+        sev = (rec.get('severity') or 'info').upper()
+        lines = [
+            'RECOMMENDATION',
+            f'Priority: {sev}',
+            rec.get('title') or '—',
+            rec.get('detail') or '—',
+        ]
+        action = self._recommendation_action_label(rec)
+        lines.append(f'Next: {action}')
+        stamp = 'GUIDANCE ONLY' if sev == 'INFO' else 'REVIEW SUGGESTED'
+        if hasattr(self, 'receipt_printer'):
+            self.receipt_printer.show_static(lines, stamp=stamp)
+        self._rec_status_lbl.config(text=f'Selected · {action}')
+        actionable = sev != 'INFO' or 'scan' in action.lower()
+        self._set_btn_state(self._rec_btn_primary, actionable,
+                            f'Run: {action}' if actionable else 'Informational only — no action required.')
+        self._set_btn_state(self._rec_btn_copy, True, 'Copy recommendation text.')
+
+    def _recommendation_action_label(self, rec):
+        title = (rec.get('title') or '').lower()
+        if 'archive' in title and 'candidate' in title:
+            return 'Go to Cleaner tab'
+        if 'no cleanup' in title:
+            return 'Scan configured folders'
+        if 'registry' in title or 'startup' in title:
+            return 'Review Startup tab'
+        if 'schedule' in title:
+            return 'Schedule cleanup'
+        if 'restore history' in title:
+            return 'Open Restore tab'
+        if 'large file' in title:
+            return 'Go to Cleaner tab'
+        return 'Copy details (informational)'
+
+    def _on_recommendation_double_click(self, _event=None):
+        self._recommendation_primary_action()
+
+    def _ensure_rec_context_menu(self):
+        if self._rec_context_menu is not None:
+            return
+        menu = self._tree_context_menu(self.rec_tree)
+        menu.add_command(label='Take action', command=self._recommendation_primary_action)
+        menu.add_command(label='Copy details', command=self._recommendation_copy_details)
+        menu.add_separator()
+        menu.add_command(label='Scan now', command=self.refresh_cleanup)
+        menu.add_command(label='Open Cleaner', command=lambda: self._navigate_to_tab(3))
+        menu.add_command(label='Open Startup', command=lambda: self._navigate_to_tab(2))
+        self._rec_context_menu = menu
+
+    def _on_recommendation_right_click(self, event):
+        self._tree_right_click_select(self.rec_tree, event)
+        self._on_recommendation_select()
+        self._ensure_rec_context_menu()
+        has = self._selected_recommendation() is not None
+        for idx, enabled in ((0, has), (1, has), (3, True), (4, True), (5, True)):
+            self._rec_context_menu.entryconfig(idx, state='normal' if enabled else 'disabled')
+        try:
+            self._rec_context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._rec_context_menu.grab_release()
+        return 'break'
+
+    def _on_archive_double_click(self, _event=None):
+        recs = self._selected_archive_records()
+        if not recs:
+            return
+        if recs[0].get('receipt_path') and Path(recs[0]['receipt_path']).is_file():
+            self._archive_open_receipt()
+        elif recs[0].get('restorable'):
+            self._archive_open_archive()
+        else:
+            self._archive_copy_path()
 
     def _tree_context_menu(self, parent):
         return tk.Menu(
@@ -5370,11 +5867,20 @@ class StartupManagerGUI(ctk.CTk):
         self.stat_size_value.config(text=self._format_size(display_size))
 
         self.rec_tree.delete(*self.rec_tree.get_children())
-        for r in recs:
-            self.rec_tree.insert('', 'end',
+        self._dashboard_recommendations = list(recs)
+        for i, r in enumerate(recs):
+            stripe = 'evenrow' if i % 2 else 'oddrow'
+            self.rec_tree.insert('', 'end', iid=str(i),
                                  values=(r['severity'].upper(), r['title'], r['detail']),
-                                 tags=(r['severity'],))
+                                 tags=(r['severity'], stripe))
         self._refresh_empty_hint(self.rec_empty_hint, self.rec_tree)
+        if recs:
+            self.rec_tree.selection_set('0')
+            self.rec_tree.focus('0')
+            self._on_recommendation_select()
+        elif hasattr(self, 'receipt_printer'):
+            self.receipt_printer.show_idle('No recommendations — scan or review startup items.')
+            self._rec_status_lbl.config(text='No actionable findings right now.')
 
         self.refresh_foresight()
         self._refresh_header_proof_badges()

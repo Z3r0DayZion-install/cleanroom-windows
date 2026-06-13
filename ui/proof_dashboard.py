@@ -242,6 +242,16 @@ class ProofDrawer(tk.Frame):
     def play(self, *args, **kwargs):
         return self.printer.play(*args, **kwargs)
 
+    def show_idle(self, message='Select a row to view proof details'):
+        if not self._expanded:
+            self.toggle()
+        self.printer.show_idle(message)
+
+    def show_static(self, lines, stamp=''):
+        if not self._expanded:
+            self.toggle()
+        self.printer.show_static(lines, stamp=stamp)
+
 
 def settings_card(parent, title: str, *, card_bg: str, accent: str) -> ctk.CTkFrame:
     """Settings section card with heading."""
