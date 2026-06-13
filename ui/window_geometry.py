@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-DEFAULT_SIZE = (1280, 760)
-MIN_SIZE = (1040, 640)
+DEFAULT_SIZE = (1320, 800)
+MIN_SIZE = (1080, 660)
 MARGIN = 28
 TASKBAR_RESERVE = 52
 

@@ -8,6 +8,6 @@ from ui import window_geometry
 
 
 def test_default_and_minimum_window_sizes():
-    assert window_geometry.DEFAULT_SIZE == (1280, 760)
-    assert window_geometry.MIN_SIZE[0] >= 1040
-    assert window_geometry.MIN_SIZE[1] >= 640
+    assert window_geometry.DEFAULT_SIZE == (1320, 800)
+    assert window_geometry.MIN_SIZE[0] >= 1080
+    assert window_geometry.MIN_SIZE[1] >= 660

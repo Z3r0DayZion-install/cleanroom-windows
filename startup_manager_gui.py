@@ -508,6 +508,7 @@ class StartupManagerGUI(ctk.CTk):
                 self._hdr_badges.grid(row=0, column=0, sticky='nw')
                 self._hdr_hero.grid(row=0, column=1, sticky='ne', padx=(16, 0), pady=0)
         self._layout_restore_split(w)
+        self._layout_archive_split(w)
         preview_w = max(240, min(360, int(max(w - 280, 640) * 0.34)))
         if hasattr(self, '_restore_preview_panel'):
             self._restore_preview_panel.configure(width=preview_w)
@@ -547,6 +548,39 @@ class StartupManagerGUI(ctk.CTk):
             left.pack(side='left', fill='both', expand=True)
             right.pack(side='left', fill='y', padx=(8, 0))
             right.pack_propagate(False)
+
+    def _layout_archive_split(self, window_width):
+        if not hasattr(self, '_archive_body'):
+            return
+        try:
+            content_w = self.tab_control.winfo_width()
+        except Exception:
+            content_w = max(window_width - 260, 640)
+        mode = 'stacked' if content_w < 1020 else 'wide'
+        detail_w = max(260, min(340, int(content_w * 0.32)))
+        if hasattr(self, '_archive_detail_panel'):
+            self._archive_detail_panel.configure(width=detail_w)
+        wrap = max(180, detail_w - 28)
+        for attr in ('_archive_detail_src', '_archive_detail_dest',
+                     '_archive_detail_meta', '_archive_detail_rank'):
+            if hasattr(self, attr):
+                getattr(self, attr).configure(wraplength=wrap)
+        if hasattr(self, '_archive_subheader'):
+            self._archive_subheader.configure(wraplength=max(320, content_w - 180))
+        if mode == getattr(self, '_archive_split_mode', 'wide'):
+            return
+        self._archive_split_mode = mode
+        tree_card = self._archive_tree_card
+        detail = self._archive_detail_panel
+        tree_card.grid_forget()
+        detail.grid_forget()
+        if mode == 'stacked':
+            tree_card.grid(row=0, column=0, sticky='nsew')
+            detail.grid(row=1, column=0, sticky='ew', pady=(8, 0))
+            detail.configure(width=max(280, content_w - 40))
+        else:
+            tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+            detail.grid(row=0, column=1, sticky='ns')
 
     # ------------------------------------------------------------------
     # Styling
@@ -614,6 +648,10 @@ class StartupManagerGUI(ctk.CTk):
                     foreground=badge_fg, padding=(8, 4))
         s.configure('Status.TLabel', font=('Segoe UI', 9), background=STATUS_BG, foreground=TEXT, padding=(8, 4))
         s.configure('TNotebook', background=BG, borderwidth=0)
+        try:
+            s.layout('TNotebook', [('Notebook.client', {'sticky': 'nswe'})])
+        except Exception:
+            pass
         s.configure('TNotebook.Tab', font=('Segoe UI', 10), padding=(14, 7),
                     background=SIDEBAR_BG, foreground=MUTED)
         s.map('TNotebook.Tab',
@@ -1204,30 +1242,67 @@ class StartupManagerGUI(ctk.CTk):
 
     def _build_archive_tab(self):
         """Dedicated archive custody manager — browse, restore, delete."""
+        self.archive_tab.grid_rowconfigure(4, weight=1)
+        self.archive_tab.grid_columnconfigure(0, weight=1)
+        self._archive_split_mode = 'wide'
+
         header = ttk.Frame(self.archive_tab, style='Content.TFrame')
-        header.pack(fill='x', padx=10, pady=(10, 6))
-        ttk.Label(header, text='Archive Custody', style='Header.TLabel').pack(anchor='w')
-        ttk.Label(
+        header.grid(row=0, column=0, sticky='ew', padx=10, pady=(6, 2))
+        ttk.Label(header, text='Archive Custody', style='Header.TLabel').pack(side='left')
+        self._archive_subheader = ttk.Label(
             header,
-            text='Everything Cleanroom archived is listed here. Delete removes the archived copy only — '
-                 'original live files are never touched.',
-            style='SubHeader.TLabel', wraplength=920,
-        ).pack(anchor='w', pady=(4, 0))
+            text='Browse custody · delete archived copies only · originals never touched.',
+            style='SubHeader.TLabel', wraplength=640,
+        )
+        self._archive_subheader.pack(side='left', padx=(10, 0), anchor='w')
 
         stats_row = ttk.Frame(self.archive_tab, style='Content.TFrame')
-        stats_row.pack(fill='x', padx=10, pady=(0, 8))
-        self.stat_arch_total = self._stat_card(stats_row, 'Items in custody')
-        self.stat_arch_safe = self._stat_card(stats_row, 'Safe to delete')
-        self.stat_arch_bytes = self._stat_card(stats_row, 'Archive size')
-        self.stat_arch_selected = self._stat_card(stats_row, 'Selected')
+        stats_row.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 4))
+        for col in range(4):
+            stats_row.grid_columnconfigure(col, weight=1)
+        self.stat_arch_total = self._stat_card_compact(stats_row, 0, 'In custody')
+        self.stat_arch_safe = self._stat_card_compact(stats_row, 1, 'Safe to delete')
+        self.stat_arch_bytes = self._stat_card_compact(stats_row, 2, 'Archive size')
+        self.stat_arch_selected = self._stat_card_compact(stats_row, 3, 'Selected')
 
-        toolbar = ctk_theme.frame(self.archive_tab, CARD_BG, corner_radius=10)
-        toolbar.pack(fill='x', padx=10, pady=(0, 8))
-        tool_inner = ctk_theme.frame(toolbar, CARD_BG)
-        tool_inner.pack(fill='x', padx=12, pady=10)
+        qa = ctk_theme.frame(self.archive_tab, CARD_BG, corner_radius=10)
+        qa.grid(row=2, column=0, sticky='ew', padx=10, pady=(0, 4))
+        qa_inner = ttk.Frame(qa, style='Card.TFrame')
+        qa_inner.pack(fill='x', padx=10, pady=8)
 
-        filter_frame = ttk.Frame(tool_inner, style='Card.TFrame')
-        filter_frame.pack(fill='x')
+        qa_primary = ttk.Frame(qa_inner, style='Card.TFrame')
+        qa_primary.pack(fill='x')
+        ttk.Button(qa_primary, text='↩ Restore Selected', style='Primary.TButton',
+                   command=self._archive_restore_selected).pack(side='left', padx=(0, 6))
+        self.delete_archive_btn = ttk.Button(
+            qa_primary, text='Delete from Archive…', style='Primary.TButton',
+            command=self.confirm_prune_selected)
+        self.delete_archive_btn.pack(side='left', padx=(0, 6))
+        self._add_tooltip(self.delete_archive_btn,
+                          'Permanently delete selected archived copies. Original live files untouched.')
+        ttk.Button(qa_primary, text='Select All Safe', style='Action.TButton',
+                   command=self._archive_select_all_safe).pack(side='left', padx=(0, 6))
+        ttk.Button(qa_primary, text='Delete All Safe…', style='Action.TButton',
+                   command=self.confirm_delete_all_safe).pack(side='left', padx=(0, 6))
+        ttk.Button(qa_primary, text='Delete Older Than…', style='Action.TButton',
+                   command=self.confirm_delete_older_than).pack(side='left', padx=(0, 6))
+        ttk.Button(qa_primary, text='Clear Selection', style='Action.TButton',
+                   command=lambda: self.archive_tree.selection_remove(
+                       self.archive_tree.selection())).pack(side='left')
+
+        qa_secondary = ttk.Frame(qa_inner, style='Card.TFrame')
+        qa_secondary.pack(fill='x', pady=(6, 0))
+        ttk.Button(qa_secondary, text='Open Archive Folder', style='Action.TButton',
+                   command=self.open_archive_folder).pack(side='left', padx=(0, 6))
+        ttk.Button(qa_secondary, text='Explorer Context Menus…', style='Action.TButton',
+                   command=self.open_shell_context_menu_tool).pack(side='left', padx=(0, 6))
+        ttk.Button(qa_secondary, text='Archive Settings…', style='Action.TButton',
+                   command=self._open_archive_settings).pack(side='left', padx=(0, 6))
+        ttk.Button(qa_secondary, text='Refresh', style='Action.TButton',
+                   command=self.refresh_archive_browser).pack(side='left')
+
+        filter_bar = ttk.Frame(self.archive_tab, style='Content.TFrame')
+        filter_bar.grid(row=3, column=0, sticky='ew', padx=10, pady=(0, 4))
         self._archive_prune_filter = tk.StringVar(value='')
         chip_labels = (
             ('All', ''), ('Safe to delete', archive_custody.PRUNE_SAFE if archive_custody else ''),
@@ -1235,42 +1310,38 @@ class StartupManagerGUI(ctk.CTk):
             ('Keep in custody', archive_custody.PRUNE_KEEP if archive_custody else ''),
         )
         for label, value in chip_labels:
-            ttk.Radiobutton(filter_frame, text=label, value=value,
+            ttk.Radiobutton(filter_bar, text=label, value=value,
                             variable=self._archive_prune_filter,
-                            command=self._apply_archive_view_filters).pack(side='left', padx=(0, 10))
-
-        search_row = ttk.Frame(tool_inner, style='Card.TFrame')
-        search_row.pack(fill='x', pady=(8, 0))
-        ttk.Label(search_row, text='Search:', style='CardInfo.TLabel').pack(side='left')
+                            command=self._apply_archive_view_filters).pack(side='left', padx=(0, 8))
+        ttk.Label(filter_bar, text='Search:', style='Info.TLabel').pack(side='left', padx=(12, 4))
         self._archive_search_var = tk.StringVar()
-        search_entry = ttk.Entry(search_row, textvariable=self._archive_search_var,
-                                 width=36, style='Search.TEntry')
-        search_entry.pack(side='left', padx=(6, 0))
+        search_entry = ttk.Entry(filter_bar, textvariable=self._archive_search_var,
+                                 width=28, style='Search.TEntry')
+        search_entry.pack(side='left')
         search_entry.bind('<Return>', lambda e: self._apply_archive_view_filters())
-        ttk.Button(search_row, text='Search', style='Action.TButton',
+        ttk.Button(filter_bar, text='Search', style='Action.TButton',
                    command=self._apply_archive_view_filters).pack(side='left', padx=(6, 0))
-        ttk.Button(search_row, text='Refresh', style='Action.TButton',
-                   command=self.refresh_archive_browser).pack(side='left', padx=(6, 0))
-        ttk.Button(search_row, text='Open Archive Folder', style='Action.TButton',
-                   command=self.open_archive_folder).pack(side='right')
 
-        body = ttk.Frame(self.archive_tab, style='Content.TFrame')
-        body.pack(fill='both', expand=True, padx=10, pady=(0, 8))
+        self._archive_body = ttk.Frame(self.archive_tab, style='Content.TFrame')
+        self._archive_body.grid(row=4, column=0, sticky='nsew', padx=10, pady=(0, 4))
+        self._archive_body.grid_rowconfigure(0, weight=1)
+        self._archive_body.grid_columnconfigure(0, weight=1)
 
-        tree_card = ttk.Labelframe(body, text='Archived items', style='Detail.TLabelframe')
-        tree_card.pack(side='left', fill='both', expand=True, padx=(0, 8))
+        tree_card = ttk.Labelframe(self._archive_body, text='Archived items', style='Detail.TLabelframe')
+        self._archive_tree_card = tree_card
+        tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
         tree_wrap = ttk.Frame(tree_card)
         tree_wrap.pack(fill='both', expand=True, padx=6, pady=6)
         acols = ('when', 'src', 'dest', 'reason', 'size', 'restorable', 'receipt', 'prune_rank')
         self.archive_tree = ttk.Treeview(tree_wrap, columns=acols, show='headings',
-                                         selectmode='extended', height=14)
+                                         selectmode='extended')
         headings = {
             'when': 'Archived', 'src': 'Original path', 'dest': 'Archive path',
             'reason': 'Reason', 'size': 'Size', 'restorable': 'On disk',
             'receipt': 'Receipt', 'prune_rank': 'Recommendation',
         }
-        widths = {'when': 120, 'src': 200, 'dest': 200, 'reason': 90, 'size': 68,
-                  'restorable': 56, 'receipt': 52, 'prune_rank': 108}
+        widths = {'when': 108, 'src': 180, 'dest': 180, 'reason': 84, 'size': 64,
+                  'restorable': 52, 'receipt': 48, 'prune_rank': 100}
         for c in acols:
             self.archive_tree.heading(c, text=headings[c])
             anchor = 'center' if c in ('size', 'restorable', 'receipt', 'prune_rank') else 'w'
@@ -1296,66 +1367,45 @@ class StartupManagerGUI(ctk.CTk):
         self._archive_records = []
         self._archive_stats = {}
 
-        detail = ttk.Labelframe(body, text='Selection', style='Detail.TLabelframe')
-        detail.pack(side='left', fill='y')
-        detail.configure(width=320)
-        detail.pack_propagate(False)
-        self._archive_detail_src = ttk.Label(detail, text='Original: —', style='CardInfo.TLabel',
-                                             wraplength=280, justify='left')
-        self._archive_detail_dest = ttk.Label(detail, text='Archive: —', style='CardInfo.TLabel',
-                                              wraplength=280, justify='left')
-        self._archive_detail_meta = ttk.Label(detail, text='', style='CardInfo.TLabel',
-                                              wraplength=280, justify='left')
-        self._archive_detail_rank = ttk.Label(detail, text='Recommendation: —', style='CardInfo.TLabel',
-                                              wraplength=280, justify='left')
+        detail = ttk.Labelframe(self._archive_body, text='Quick actions', style='Detail.TLabelframe')
+        self._archive_detail_panel = detail
+        detail.grid(row=0, column=1, sticky='ns')
+        detail.configure(width=300)
+        detail.grid_propagate(False)
+
+        qa_grid = ttk.Frame(detail, style='Card.TFrame')
+        qa_grid.pack(fill='x', padx=8, pady=(8, 4))
+        qa_grid.columnconfigure(0, weight=1)
+        qa_grid.columnconfigure(1, weight=1)
+        quick_btns = (
+            ('Restore', self._archive_restore_selected),
+            ('Delete…', self.confirm_prune_selected),
+            ('Open Receipt', self._archive_open_receipt),
+            ('Open Archive', self._archive_open_archive),
+            ('Open Original', self._archive_open_original),
+            ('Copy paths', self._archive_copy_path),
+        )
+        for i, (label, cmd) in enumerate(quick_btns):
+            ttk.Button(qa_grid, text=label, style='Action.TButton', command=cmd).grid(
+                row=i // 2, column=i % 2, sticky='ew', padx=2, pady=2)
+
+        meta = ttk.Frame(detail, style='Card.TFrame')
+        meta.pack(fill='both', expand=True, padx=8, pady=(4, 8))
+        self._archive_detail_src = ttk.Label(meta, text='Original: —', style='CardInfo.TLabel',
+                                             wraplength=260, justify='left')
+        self._archive_detail_dest = ttk.Label(meta, text='Archive: —', style='CardInfo.TLabel',
+                                              wraplength=260, justify='left')
+        self._archive_detail_meta = ttk.Label(meta, text='Select items from the list.',
+                                              style='CardInfo.TLabel', wraplength=260, justify='left')
+        self._archive_detail_rank = ttk.Label(meta, text='Recommendation: —', style='CardInfo.TLabel',
+                                              wraplength=260, justify='left')
         for lbl in (self._archive_detail_src, self._archive_detail_dest,
                     self._archive_detail_meta, self._archive_detail_rank):
-            lbl.pack(anchor='w', padx=10, pady=(8, 2))
-
-        detail_btns = ttk.Frame(detail, style='Card.TFrame')
-        detail_btns.pack(fill='x', padx=10, pady=(8, 4))
-        ttk.Button(detail_btns, text='Restore', style='Action.TButton',
-                   command=self._archive_restore_selected).pack(fill='x', pady=2)
-        ttk.Button(detail_btns, text='Open Archive Location', style='Action.TButton',
-                   command=self._archive_open_archive).pack(fill='x', pady=2)
-        ttk.Button(detail_btns, text='Open Original Location', style='Action.TButton',
-                   command=self._archive_open_original).pack(fill='x', pady=2)
-        ttk.Button(detail_btns, text='Open Receipt', style='Action.TButton',
-                   command=self._archive_open_receipt).pack(fill='x', pady=2)
-
-        ttk.Button(detail_btns, text='Copy Archive Path', style='Action.TButton',
-                   command=self._archive_copy_path).pack(fill='x', pady=2)
-
-        footer = ctk_theme.frame(self.archive_tab, CARD_BG, corner_radius=10)
-        footer.pack(fill='x', padx=10, pady=(0, 10))
-        foot_inner = ttk.Frame(footer, style='Card.TFrame')
-        foot_inner.pack(fill='x', padx=12, pady=10)
-
-        left_actions = ttk.Frame(foot_inner, style='Card.TFrame')
-        left_actions.pack(side='left')
-        ttk.Button(left_actions, text='Select All Safe', style='Action.TButton',
-                   command=self._archive_select_all_safe).pack(side='left', padx=(0, 6))
-        ttk.Button(left_actions, text='Clear Selection', style='Action.TButton',
-                   command=lambda: self.archive_tree.selection_remove(
-                       self.archive_tree.selection())).pack(side='left', padx=(0, 6))
-        ttk.Button(left_actions, text='Archive Settings…', style='Action.TButton',
-                   command=self._open_archive_settings).pack(side='left')
-
-        right_actions = ttk.Frame(foot_inner, style='Card.TFrame')
-        right_actions.pack(side='right')
-        ttk.Button(right_actions, text='Delete Older Than…', style='Action.TButton',
-                   command=self.confirm_delete_older_than).pack(side='left', padx=(0, 6))
-        ttk.Button(right_actions, text='Delete All Safe', style='Action.TButton',
-                   command=self.confirm_delete_all_safe).pack(side='left', padx=(0, 6))
-        self.delete_archive_btn = ttk.Button(
-            right_actions, text='Delete Selected from Archive', style='Primary.TButton',
-            command=self.confirm_prune_selected)
-        self.delete_archive_btn.pack(side='left')
-        self._add_tooltip(self.delete_archive_btn,
-                          'Permanently delete selected archived copies. Original live files untouched.')
+            lbl.pack(anchor='w', pady=(4, 2))
 
         self.archive_status_lbl = ttk.Label(self.archive_tab, text='', style='Info.TLabel')
-        self.archive_status_lbl.pack(anchor='w', padx=12, pady=(0, 4))
+        self.archive_status_lbl.grid(row=5, column=0, sticky='w', padx=12, pady=(0, 6))
+
     def _stat_card(self, parent, caption):
         """White stat card with a big value label; returns the value label."""
         card = tk.Frame(parent, bg=CARD_BG, highlightbackground=BORDER, highlightthickness=1)
@@ -1364,6 +1414,19 @@ class StartupManagerGUI(ctk.CTk):
         value.pack(anchor='w', padx=16, pady=(14, 0))
         tk.Label(card, text=caption, bg=CARD_BG, fg=MUTED,
                  font=('Segoe UI', 9)).pack(anchor='w', padx=16, pady=(0, 14))
+        return value
+
+    def _stat_card_compact(self, parent, column, caption):
+        """Compact horizontal stat chip for dense tabs (Archive)."""
+        pad = (0, 6) if column < 3 else (0, 0)
+        card = tk.Frame(parent, bg=CARD_BG, highlightbackground=BORDER, highlightthickness=1)
+        card.grid(row=0, column=column, sticky='ew', padx=pad)
+        inner = tk.Frame(card, bg=CARD_BG)
+        inner.pack(fill='x', padx=10, pady=5)
+        value = tk.Label(inner, text='—', bg=CARD_BG, fg=TEXT, font=('Segoe UI', 15, 'bold'))
+        value.pack(side='left')
+        tk.Label(inner, text=caption, bg=CARD_BG, fg=MUTED,
+                 font=('Segoe UI', 8)).pack(side='left', padx=(8, 0), pady=(3, 0))
         return value
 
     def _config_status_label(self):
