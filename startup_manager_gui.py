@@ -4,6 +4,7 @@ import queue
 import brand
 import customtkinter as ctk
 from ui import ctk_theme
+from ui.launcher import run_launch_splash
 from ui.page_layout import (
     CONTENT_MAX_WIDTH,
     apply_centered_shell,
