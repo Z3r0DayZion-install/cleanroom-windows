@@ -10,6 +10,7 @@ from ui.page_layout import (
     bind_pane_persistence,
     classify_layout,
     create_horizontal_pane,
+    ensure_pane_sash,
     sync_table_empty_view,
 )
 from ui.window_geometry import (
@@ -40,6 +41,7 @@ from ui.proof_dashboard import (
     recent_proof_tile,
     recommendation_card,
     settings_card,
+    settings_pill_nav,
     settings_sidebar_nav,
     sidebar_nav_button,
     trust_compact_strip,
@@ -497,7 +499,7 @@ class StartupManagerGUI(ctk.CTk):
         if not animations_disabled():
             self._fade_in_window()
             self.after(350, self._pulse_proof_flow)
-        self._init_tray()
+        self.after(900, self._init_tray)
         self._apply_initial_tab()
         if hasattr(self, '_shell_pane'):
             self._bind_pane(self._shell_pane, 'shell_sidebar', default=248)
@@ -560,12 +562,21 @@ class StartupManagerGUI(ctk.CTk):
         prefs['pane_sizes'] = sizes
         save_ui_prefs(prefs)
 
-    def _bind_pane(self, pane, key, default=None):
+    def _bind_pane(self, pane, key, default=None, **kw):
         bind_pane_persistence(
             pane, key,
             get_value=lambda k, d=default: self._pane_pref(k, d),
             set_value=self._save_pane_pref,
             default=default,
+            **kw,
+        )
+
+    def _ensure_pane(self, pane, key, default=None, **kw):
+        ensure_pane_sash(
+            pane, key=key,
+            get_value=lambda k, d=default: self._pane_pref(k, d),
+            default=default,
+            **kw,
         )
 
     def _show_tray_unavailable(self, reason: str = ''):
@@ -666,28 +677,52 @@ class StartupManagerGUI(ctk.CTk):
         if state == RECEIPT_READY and hasattr(self, 'dashboard_primary_btn'):
             self.dashboard_primary_btn.configure(
                 text='Preview Receipt', command=self.preview_cleanup_receipt)
+            if hasattr(self, 'dashboard_preview_btn'):
+                self.dashboard_preview_btn.config(state='normal')
+            if hasattr(self, 'dashboard_archive_btn'):
+                self.dashboard_archive_btn.config(state='normal')
             self.dashboard_secondary_btn.configure(
                 text='Open Cleaner', command=lambda: self._navigate_to_tab(3))
         elif state == RESULTS_READY and hasattr(self, 'dashboard_primary_btn'):
             self.dashboard_primary_btn.configure(
                 text='Open Cleaner', command=lambda: self._navigate_to_tab(3))
+            if hasattr(self, 'dashboard_preview_btn'):
+                self.dashboard_preview_btn.config(state='normal')
+            if hasattr(self, 'dashboard_archive_btn'):
+                self.dashboard_archive_btn.config(state='normal')
             self.dashboard_secondary_btn.configure(
                 text='Preview Receipt', command=self.preview_cleanup_receipt)
         elif state == EMPTY_DONE and hasattr(self, 'dashboard_primary_btn'):
             self.dashboard_primary_btn.configure(
                 text='Scan Again', command=self.refresh_cleanup)
+            if hasattr(self, 'dashboard_preview_btn'):
+                self.dashboard_preview_btn.config(state='disabled')
+            if hasattr(self, 'dashboard_archive_btn'):
+                self.dashboard_archive_btn.config(state='disabled')
             self.dashboard_secondary_btn.configure(
                 text='Open Activity', command=lambda: self._navigate_to_tab(1))
         elif custody_missing and hasattr(self, 'dashboard_primary_btn'):
             self.dashboard_primary_btn.configure(
                 text='Review custody', command=lambda: self._navigate_to_tab(1))
+            if hasattr(self, 'dashboard_preview_btn'):
+                self.dashboard_preview_btn.config(state='disabled')
+            if hasattr(self, 'dashboard_archive_btn'):
+                self.dashboard_archive_btn.config(state='disabled')
             self.dashboard_secondary_btn.configure(
                 text='Open Archive', command=lambda: self._navigate_to_tab(6))
         elif hasattr(self, 'dashboard_primary_btn'):
             self.dashboard_primary_btn.configure(
                 text='Scan Now', command=self.refresh_cleanup)
+            if hasattr(self, 'dashboard_preview_btn'):
+                self.dashboard_preview_btn.config(state='disabled')
+            if hasattr(self, 'dashboard_archive_btn'):
+                self.dashboard_archive_btn.config(state='disabled')
             self.dashboard_secondary_btn.configure(
                 text='Open Activity', command=lambda: self._navigate_to_tab(1))
+        if self._cleaner_loading and hasattr(self, 'dashboard_preview_btn'):
+            for attr in ('dashboard_preview_btn', 'dashboard_archive_btn', 'dashboard_primary_btn'):
+                if hasattr(self, attr):
+                    getattr(self, attr).config(state='disabled')
         self.preview_receipt_btn = getattr(self, 'dashboard_primary_btn', None)
 
     def _toggle_sidebar_collapsed(self):
@@ -713,18 +748,26 @@ class StartupManagerGUI(ctk.CTk):
             except Exception:
                 pass
 
-    def _init_tray(self):
+    def _init_tray(self, attempt: int = 0):
         try:
             from ui.tray import TrayController
             self._tray = TrayController(self)
             if not self._tray.start():
                 err = self._tray.last_error or 'Tray icon could not start'
                 self._tray = None
+                if attempt < 2:
+                    logger.warning('Tray start retry %s: %s', attempt + 1, err)
+                    self.after(1500, lambda: self._init_tray(attempt + 1))
+                    return
                 self._show_tray_unavailable(err)
                 return
             logger.info('Tray icon active')
         except Exception as exc:
             self._tray = None
+            if attempt < 2:
+                logger.warning('Tray init retry %s: %s', attempt + 1, exc)
+                self.after(1500, lambda: self._init_tray(attempt + 1))
+                return
             self._show_tray_unavailable(str(exc))
             logger.exception('Tray init failed')
 
@@ -866,22 +909,9 @@ class StartupManagerGUI(ctk.CTk):
             except Exception:
                 scale = 1.0
             if h < 680 or scale >= 1.45:
-                self._activity_top.pack_forget()
+                self._activity_top.grid_remove()
             else:
-                self._activity_top.pack(fill='x', padx=10, pady=(0, 8))
-        if hasattr(self, '_activity_hint') and hasattr(self, '_activity_bar'):
-            try:
-                scale = float(self.tk.call('tk', 'scaling'))
-            except Exception:
-                scale = 1.0
-            if h < 640 or scale >= 1.45:
-                self._activity_hint.pack_forget()
-            else:
-                self._activity_hint.pack(fill='x', padx=10, pady=(0, 6))
-            if h < 620 or scale >= 1.45:
-                self._activity_bar.pack_forget()
-            else:
-                self._activity_bar.pack(fill='x', padx=10, pady=(0, 6))
+                self._activity_top.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 6))
         wrap = max(420, w - 340)
         for attr in ('uninst_detail_what', 'uninst_detail_does',
                      'uninst_detail_need', 'uninst_detail_uninst'):
@@ -1151,6 +1181,14 @@ class StartupManagerGUI(ctk.CTk):
             text_color=PROOF, font_size=9, weight='bold',
         ).pack(anchor='w', padx=12, pady=6)
         self._archive_banner.pack_forget()
+
+        self._archive_badge = ctk_theme.frame(top, PROOF_SOFT, corner_radius=6)
+        ctk_theme.label(
+            self._archive_badge, 'Archive-first ON',
+            text_color=PROOF, font_size=8, weight='bold',
+        ).pack(side='left', padx=10, pady=3)
+        self._archive_badge.pack_forget()
+        self._archive_banner_collapsed = bool(load_ui_prefs().get('archive_banner_collapsed', False))
 
         self._add_tooltip(self.hdr_trust_value,
                           'Custody trust — % of archived artifacts verified on disk right now.')
@@ -1514,13 +1552,15 @@ class StartupManagerGUI(ctk.CTk):
         ):
             btn = sidebar_nav_button(
                 main_body, label, lambda i=idx: self._navigate_to_tab(i), **nav_kw)
-            btn.pack(fill='x', pady=6, padx=8)
+            btn.pack(fill='x', pady=3, padx=8)
             self._nav_buttons.append((idx, btn))
             self._add_tooltip(btn, tip)
 
-        _, sys_body = collapsible_section(
-            nav_scroll, 'System', start_open=True, **section_kw,
+        sys_toggle, sys_body = collapsible_section(
+            nav_scroll, 'System', start_open=False, **section_kw,
         )
+        self._sidebar_sys_toggle = sys_toggle
+        self._sidebar_sys_body = sys_body
         for idx, label, tip in (
             (2, 'Startup', 'Startup programs — filter by source, enable or disable.'),
             (4, 'Uninstaller', 'Uninstall programs and archive leftovers.'),
@@ -1529,7 +1569,7 @@ class StartupManagerGUI(ctk.CTk):
         ):
             btn = sidebar_nav_button(
                 sys_body, label, lambda i=idx: self._navigate_to_tab(i), **nav_kw)
-            btn.pack(fill='x', pady=6, padx=8)
+            btn.pack(fill='x', pady=3, padx=8)
             self._nav_buttons.append((idx, btn))
             self._add_tooltip(btn, tip)
 
@@ -1557,7 +1597,7 @@ class StartupManagerGUI(ctk.CTk):
         ]
         for i, (label, cmd, tip) in enumerate(tools):
             btn = sidebar_nav_button(tools_body, label, cmd, **nav_kw)
-            btn.pack(fill='x', pady=6, padx=8)
+            btn.pack(fill='x', pady=3, padx=8)
             if i == 0:
                 self._sidebar_explorer_btn = btn
             self._add_tooltip(btn, tip)
@@ -1574,6 +1614,15 @@ class StartupManagerGUI(ctk.CTk):
         self._sidebar_collapse_btn.pack(side='right')
         ctk_theme.label(foot_row, 'F5 · Ctrl+F · Ctrl+1–8',
                         text_color=MUTED, font_size=9).pack(side='left', anchor='w')
+
+    def _sync_sidebar_sections(self, tab_idx: int):
+        """Expand System when a system tab is active."""
+        try:
+            if tab_idx in (2, 4, 5, 7) and hasattr(self, '_sidebar_sys_body'):
+                if not self._sidebar_sys_body.winfo_ismapped() and self._sidebar_sys_toggle:
+                    self._sidebar_sys_toggle.invoke()
+        except Exception:
+            pass
 
     def _expand_sidebar_tools(self):
         """Expand Tools group so advanced utilities are reachable (layout gates, deep links)."""
@@ -1609,7 +1658,35 @@ class StartupManagerGUI(ctk.CTk):
         self._update_page_chrome(current)
         if current == 3 and hasattr(self, '_sync_cleaner_state'):
             self._sync_cleaner_state()
+        if current == 1 and hasattr(self, '_activity_pane'):
+            self.after(80, lambda: self._ensure_pane(
+                self._activity_pane, 'activity_split', default=520,
+                min_left=340, min_right=260, default_ratio=0.68))
+        self._sync_sidebar_sections(current)
         self._lazy_load_tab(current)
+
+    def _collapse_archive_banner(self):
+        self._archive_banner_collapsed = True
+        prefs = load_ui_prefs()
+        prefs['archive_banner_collapsed'] = True
+        save_ui_prefs(prefs)
+        self._update_page_chrome()
+
+    def _set_activity_loading(self, loading: bool):
+        if not hasattr(self, '_activity_loading_lbl'):
+            return
+        if loading:
+            self._activity_loading_lbl.place(relx=0.5, rely=0.42, anchor='center')
+            if hasattr(self, '_activity_tree_card'):
+                self._activity_tree_card.pack_forget()
+        else:
+            self._activity_loading_lbl.place_forget()
+            if hasattr(self, '_activity_tree_card'):
+                self._activity_tree_card.pack(fill='both', expand=True)
+            if hasattr(self, '_activity_pane'):
+                self._ensure_pane(
+                    self._activity_pane, 'activity_split', default=520,
+                    min_left=340, min_right=260, default_ratio=0.68)
 
     def _update_page_chrome(self, tab_idx=None):
         """Adaptive header — minimal chrome on workspace pages."""
@@ -1621,20 +1698,32 @@ class StartupManagerGUI(ctk.CTk):
         dashboard = tab_idx == 0
         self._page_is_dashboard = dashboard
         show_trust = tab_idx in (0, 3, 6)
-        show_archive = tab_idx in (0, 3)
+        show_archive = tab_idx in (0, 3) and not getattr(self, '_archive_banner_collapsed', False)
+        show_archive_badge = tab_idx in (0, 3) and getattr(self, '_archive_banner_collapsed', False)
         try:
             if hasattr(self, '_hdr_summary'):
                 self._hdr_summary.pack_forget()
             if hasattr(self, '_hdr_compact'):
-                if show_trust:
+                if show_trust or show_archive_badge:
                     self._hdr_compact.pack(fill='x', pady=(2, 0))
                 else:
                     self._hdr_compact.pack_forget()
             if hasattr(self, '_archive_banner'):
                 if show_archive:
                     self._archive_banner.pack(fill='x', pady=(2, 0))
+                    prefs = load_ui_prefs()
+                    if not prefs.get('archive_banner_seen'):
+                        prefs = dict(prefs)
+                        prefs['archive_banner_seen'] = True
+                        save_ui_prefs(prefs)
+                        self.after(4000, self._collapse_archive_banner)
                 else:
                     self._archive_banner.pack_forget()
+            if hasattr(self, '_archive_badge'):
+                if show_archive_badge:
+                    self._archive_badge.pack(fill='x', pady=(2, 0))
+                else:
+                    self._archive_badge.pack_forget()
             if hasattr(self, '_context_bar'):
                 if dashboard:
                     self._context_bar.pack_forget()
@@ -1671,6 +1760,14 @@ class StartupManagerGUI(ctk.CTk):
         self.dashboard_primary_btn = ttk.Button(
             cta_row, text='Scan Now', style='Primary.TButton', command=self.refresh_cleanup)
         self.dashboard_primary_btn.pack(side='left', ipadx=14, ipady=6)
+        self.dashboard_preview_btn = ttk.Button(
+            cta_row, text='Preview Receipt', style='Action.TButton',
+            command=self.preview_cleanup_receipt, state='disabled')
+        self.dashboard_preview_btn.pack(side='left', padx=(10, 0))
+        self.dashboard_archive_btn = ttk.Button(
+            cta_row, text='Archive & Clean', style='Action.TButton',
+            command=self.apply_cleanup, state='disabled')
+        self.dashboard_archive_btn.pack(side='left', padx=(10, 0))
         self.dashboard_secondary_btn = ttk.Button(
             cta_row, text='Open Activity', style='Action.TButton',
             command=lambda: self._navigate_to_tab(1))
@@ -1754,7 +1851,7 @@ class StartupManagerGUI(ctk.CTk):
         self._home_rec = rec_card
         rec_card.grid_rowconfigure(1, weight=1)
         rec_card.grid_columnconfigure(0, weight=1)
-        ttk.Label(rec_card, text='Recommendations', font=('Segoe UI', 11, 'bold'),
+        ttk.Label(rec_card, text='Next recommended action', font=('Segoe UI', 11, 'bold'),
                   background=CARD_BG).grid(row=0, column=0, sticky='w', padx=10, pady=(6, 2))
         rec_body = ttk.Frame(rec_card, style='Card.TFrame')
         rec_body.grid(row=1, column=0, sticky='nsew', padx=10, pady=(0, 8))
@@ -1815,8 +1912,11 @@ class StartupManagerGUI(ctk.CTk):
 
     def _build_activity_tab(self):
         """Proof ledger — every action Cleanroom ever took, with custody status."""
+        self.activity_tab.grid_rowconfigure(2, weight=1)
+        self.activity_tab.grid_columnconfigure(0, weight=1)
+
         head = ttk.Frame(self.activity_tab, style='Content.TFrame')
-        head.pack(fill='x', padx=10, pady=(10, 4))
+        head.grid(row=0, column=0, sticky='ew', padx=10, pady=(8, 4))
         ttk.Label(head, text='Proof Ledger', font=('Segoe UI', 13, 'bold'),
                   background=BG).pack(side='left')
         self.act_status_lbl = ttk.Label(head, text='', style='Badge.TLabel')
@@ -1826,7 +1926,7 @@ class StartupManagerGUI(ctk.CTk):
         self.act_refresh_btn.pack(side='right')
 
         top = ttk.Frame(self.activity_tab, style='Content.TFrame')
-        top.pack(fill='x', padx=10, pady=(0, 8))
+        top.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 6))
         self._activity_top = top
 
         proof_strip = ctk_theme.frame(top, PROOF_SOFT, corner_radius=10)
@@ -1860,11 +1960,21 @@ class StartupManagerGUI(ctk.CTk):
 
         self.act_sub_notebook = None
         self._activity_container = ttk.Frame(self.activity_tab, style='Card.TFrame')
-        self._activity_container.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        self._activity_container.grid(row=2, column=0, sticky='nsew', padx=10, pady=(0, 8))
 
         self._activity_pane, activity_left, activity_right = create_horizontal_pane(
-            self._activity_container, use_pack=True)
-        self._bind_pane(self._activity_pane, 'activity_split', default=520)
+            self._activity_container, use_pack=True, min_left=340, min_right=260)
+        self._bind_pane(
+            self._activity_pane, 'activity_split', default=520,
+            min_left=340, min_right=260, default_ratio=0.68)
+
+        self._activity_loading_lbl = ttk.Label(
+            activity_left,
+            text='Loading proof ledger…',
+            style='Info.TLabel',
+            font=('Segoe UI', 12),
+            anchor='center',
+        )
 
         tree_card = ttk.Frame(activity_left, style='Card.TFrame')
         self._activity_tree_card = tree_card
@@ -2793,14 +2903,27 @@ class StartupManagerGUI(ctk.CTk):
                 self._cleanup_detail_why.config(
                     text='Run Scan to review configured folders, then select a row here.')
             else:
-                self._cleanup_detail_name.config(text='No candidate selected')
+                checked = len(self.cleanup_selected or set())
+                total = len(self.cleanup_items or [])
+                self._cleanup_detail_name.config(text='No row selected')
                 self._cleanup_detail_path.config(text='')
                 self._cleanup_detail_reason.config(text='')
                 self._cleanup_detail_size.config(text='')
                 self._cleanup_detail_archive.config(text='')
                 self._cleanup_detail_receipt.config(text='')
-                self._cleanup_detail_why.config(
-                    text='Click a candidate row to review path, archive destination, and safety notes.')
+                if checked:
+                    self._cleanup_detail_why.config(
+                        text=(f'{checked} of {total} candidate(s) are checked for archive. '
+                              'Click a row to inspect its path, reason, and archive destination.'))
+                else:
+                    self._cleanup_detail_why.config(
+                        text=(f'{total} candidate(s) found. Check rows to include in archive, '
+                              'then click a row to inspect details.'))
+            for btn in (
+                self._cleanup_btn_open, self._cleanup_btn_copy,
+                self._cleanup_btn_exclude, self._cleanup_btn_preview,
+            ):
+                btn.config(state='disabled')
             return
         idx = self.cleanup_tree.index(sel[0])
         if idx < 0 or idx >= len(self.cleanup_items):
@@ -3106,21 +3229,28 @@ class StartupManagerGUI(ctk.CTk):
         self.settings_tab.grid_columnconfigure(0, weight=1)
 
         body = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        body.grid(row=0, column=0, sticky='nsew', padx=10, pady=(10, 4))
-        body.grid_rowconfigure(0, weight=1)
+        body.grid(row=0, column=0, sticky='nsew', padx=10, pady=(8, 4))
+        body.grid_rowconfigure(2, weight=1)
         body.grid_columnconfigure(0, weight=1)
 
-        self._settings_pane, settings_nav, settings_content = create_horizontal_pane(body)
-        self._bind_pane(self._settings_pane, 'settings_split', default=200)
+        hdr = ctk_theme.frame(body, BG)
+        hdr.grid(row=0, column=0, sticky='ew', pady=(0, 4))
+        ctk_theme.label(
+            hdr, 'Control Room', text_color=TEXT, font_size=16, weight='bold',
+        ).pack(anchor='w')
+        ctk_theme.label(
+            hdr, 'Application preferences, scan paths, archive rules, and tools.',
+            text_color=MUTED, font_size=10,
+        ).pack(anchor='w', pady=(2, 0))
 
-        nav_host = ctk_theme.frame(settings_nav, SIDEBAR_BG, corner_radius=10)
-        nav_host.pack(fill='both', expand=True)
+        pill_host = ctk_theme.frame(body, BG)
+        pill_host.grid(row=1, column=0, sticky='ew', pady=(0, 6))
 
         content = ctk.CTkScrollableFrame(
-            settings_content, fg_color=BG, corner_radius=10,
+            body, fg_color=BG, corner_radius=10,
             scrollbar_button_color=BORDER, scrollbar_button_hover_color=ACCENT_SOFT,
         )
-        content.pack(fill='both', expand=True)
+        content.grid(row=2, column=0, sticky='nsew')
 
         self._settings_section_frames = {}
         for name in ('General', 'Scan', 'Archive', 'Explorer', 'Receipts', 'Advanced'):
@@ -3128,17 +3258,9 @@ class StartupManagerGUI(ctk.CTk):
             self._settings_section_frames[name] = frame
 
         def _select_settings_section(name):
-            titles = {
-                'General': ('General', 'Application preferences and local-only proof mode.'),
-                'Scan': ('Scan folders', 'Folders, age thresholds, and scan toggles.'),
-                'Archive': ('Archive custody', 'Retention rules and archive browser shortcuts.'),
-                'Explorer': ('Explorer integration', 'Windows right-click menus (also under Tools).'),
-                'Receipts': ('Receipts & proof', 'Receipt files and proof pack exports.'),
-                'Advanced': ('Advanced', 'Exclude patterns, whitelist, and power-user density.'),
-            }
             for key, frame in self._settings_section_frames.items():
                 if key == name:
-                    frame.pack(fill='both', expand=True, padx=4, pady=4)
+                    frame.pack(fill='both', expand=True, padx=2, pady=2)
                 else:
                     frame.pack_forget()
             for key, btn in self._settings_nav_btns.items():
@@ -3148,31 +3270,18 @@ class StartupManagerGUI(ctk.CTk):
                 else:
                     btn.configure(fg_color='transparent', text_color=TEXT,
                                   font=ctk_theme.font(11, 'normal'))
-            if hasattr(self, '_settings_page_title'):
-                title, sub = titles.get(name, (name, ''))
-                self._settings_page_title.configure(text=title)
-                self._settings_page_sub.configure(text=sub)
 
-        page_hdr = ctk_theme.frame(content, BG)
-        page_hdr.pack(fill='x', padx=4, pady=(4, 8))
-        self._settings_page_title = ctk_theme.label(
-            page_hdr, 'General', text_color=TEXT, font_size=17, weight='bold')
-        self._settings_page_title.pack(anchor='w')
-        self._settings_page_sub = ctk_theme.label(
-            page_hdr, '', text_color=MUTED, font_size=11, wraplength=640, justify='left')
-        self._settings_page_sub.pack(anchor='w', pady=(2, 0))
-
-        self._settings_nav_btns = settings_sidebar_nav(
-            nav_host,
+        self._settings_nav_btns = settings_pill_nav(
+            pill_host,
             (
                 ('General', 'General'),
                 ('Scan folders', 'Scan'),
                 ('Archive custody', 'Archive'),
-                ('Explorer integration', 'Explorer'),
+                ('Explorer', 'Explorer'),
                 ('Receipts', 'Receipts'),
                 ('Advanced', 'Advanced'),
             ),
-            sidebar_bg=SIDEBAR_BG, accent=ACCENT_SOFT, muted=MUTED, text_color=TEXT,
+            bg=BG, accent=ACCENT_SOFT, muted=MUTED, text_color=TEXT,
             on_select=_select_settings_section,
         )
         self._select_settings_section = _select_settings_section
@@ -5230,7 +5339,8 @@ class StartupManagerGUI(ctk.CTk):
             return
         self._cancel_chunked_work('activity_tree')
         self.act_refresh_btn.config(state='disabled')
-        self.act_status_lbl.config(text='Loading activity ledger…')
+        self.act_status_lbl.config(text='Loading proof ledger…')
+        self._set_activity_loading(True)
 
         log_path = str(self.restore_log_path)
 
@@ -5251,6 +5361,7 @@ class StartupManagerGUI(ctk.CTk):
         def done(result, err):
             self.act_refresh_btn.config(state='normal')
             if err is not None:
+                self._set_activity_loading(False)
                 self.act_status_lbl.config(text=f'Load failed: {err}')
                 return
             feed, custody, summary, trust = result
@@ -5294,10 +5405,23 @@ class StartupManagerGUI(ctk.CTk):
                 )
 
             def on_complete():
+                self._set_activity_loading(False)
                 self.act_status_lbl.config(
-                    text=f'Custody trust {trust}%' if custody['total'] else 'Awaiting first action')
+                    text=f'{summary["total_actions"]:,} actions · custody trust {trust}%'
+                    if custody['total'] else 'Awaiting first action')
+                if rows:
+                    try:
+                        first = self.activity_tree.get_children()[0]
+                        self.activity_tree.selection_set(first)
+                        self.activity_tree.focus(first)
+                    except Exception:
+                        pass
                 self._on_activity_select()
                 self._update_brand_identity()
+                if hasattr(self, '_activity_pane'):
+                    self.after(50, lambda: self._ensure_pane(
+                        self._activity_pane, 'activity_split', default=520,
+                        min_left=340, min_right=260, default_ratio=0.68))
 
             self._chunked_tree_populate(
                 self.activity_tree,
@@ -5736,17 +5860,25 @@ class StartupManagerGUI(ctk.CTk):
     def _on_activity_select(self):
         entry = self._selected_activity_entry()
         if not entry:
+            feed_n = len(getattr(self, '_activity_feed', []) or [])
             self._act_detail_type.config(text='Type: —')
             self._act_detail_when.config(text='When: —')
             self._act_detail_custody.config(text='Custody: —')
             self._act_detail_src.config(text='Source: —')
             self._act_detail_dest.config(text='Archive path: —')
-            self._act_detail_hint.config(
-                text='Select a ledger row to view proof details and available actions.')
+            if feed_n:
+                self._act_detail_hint.config(
+                    text=(f'No row selected. {feed_n:,} action(s) logged — '
+                          'click a row to view proof details and available actions.'))
+            else:
+                self._act_detail_hint.config(
+                    text='No actions logged yet. Run a cleanup to populate the proof ledger.')
             for btn in (self._act_btn_receipt, self._act_btn_archive, self._act_btn_copy,
                         self._act_btn_proof, self._act_btn_restore):
                 self._set_btn_state(btn, False)
-            self._set_btn_state(self._act_btn_verify, True, 'Audit all archived artifacts on disk.')
+            self._set_btn_state(self._act_btn_verify, feed_n > 0,
+                                'Audit all archived artifacts on disk.' if feed_n else
+                                'No custody records to verify yet.')
             return
 
         when = (entry.get('when') or '')[:19].replace('T', ' ')

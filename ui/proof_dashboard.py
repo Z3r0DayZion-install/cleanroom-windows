@@ -489,6 +489,31 @@ class ProofSummaryCard(tk.Frame):
             btn.config(state='normal')
 
 
+def settings_pill_nav(
+    parent,
+    items: list[tuple[str, str]],
+    *,
+    bg: str,
+    accent: str,
+    muted: str,
+    text_color: str,
+    on_select,
+) -> dict[str, ctk.CTkButton]:
+    """Horizontal pill tabs for Settings — one product page, no inner rail."""
+    row = ctk_theme.frame(parent, bg)
+    row.pack(fill='x', pady=(0, 8))
+    buttons: dict[str, ctk.CTkButton] = {}
+    for label, key in items:
+        btn = ctk_theme.button(
+            row, label, lambda k=key: on_select(k),
+            fg_color='transparent', hover_color=accent, text_color=text_color,
+            height=32, corner_radius=16,
+        )
+        btn.pack(side='left', padx=(0, 6))
+        buttons[key] = btn
+    return buttons
+
+
 def settings_section_nav(parent, labels: list[str], *, sidebar_bg: str, accent: str, muted: str, on_select):
     """Horizontal segmented settings nav (legacy); prefer settings_sidebar_nav."""
     row = ctk_theme.frame(parent, sidebar_bg)

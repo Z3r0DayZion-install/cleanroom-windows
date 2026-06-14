@@ -173,7 +173,21 @@ class TrayController:
         )
         _ensure_icon_running_attr(icon)
         self._icon = icon
+        try:
+            icon.visible = True
+        except Exception:
+            pass
         icon.run_detached()
+
+        def _nudge():
+            if self._icon is not None and not self._stopping:
+                try:
+                    self._icon.visible = True
+                except Exception:
+                    pass
+
+        threading.Timer(0.6, _nudge).start()
+        threading.Timer(2.0, _nudge).start()
         self._ready.set()
         logger.info('Tray icon started (%s)', icon_name)
 

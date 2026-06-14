@@ -151,36 +151,78 @@ def bind_pane_persistence(
     get_value,
     set_value,
     default: int | None = None,
+    min_left: int = 300,
+    min_right: int = 240,
+    default_ratio: float = 0.62,
 ) -> None:
     """Restore and save ttk.PanedWindow sash position under *key*."""
-    state = {'restored': False}
+    state = {'last_width': 0}
+
+    def _clamp_pos(total: int) -> int:
+        if total < min_left + min_right:
+            return max(min_left, total // 2)
+        saved = get_value(key, default)
+        if saved is None:
+            pos = int(total * default_ratio)
+        else:
+            pos = int(saved)
+        lo = min_left
+        hi = max(min_left, total - min_right)
+        return max(lo, min(pos, hi))
 
     def _restore(_event=None):
-        if state['restored']:
-            return
         try:
             pane.update_idletasks()
-            pos = get_value(key, default)
-            if pos is not None:
-                total = max(pane.winfo_width(), 1)
-                pos = max(120, min(int(pos), max(total - 120, 120)))
-                pane.sashpos(0, pos)
-            state['restored'] = True
+            total = max(pane.winfo_width(), 1)
+            if total < 80:
+                return
+            if state['last_width'] and abs(total - state['last_width']) < 24:
+                return
+            state['last_width'] = total
+            pane.sashpos(0, _clamp_pos(total))
         except Exception:
             pass
 
     def _save(_event=None):
         try:
-            set_value(key, pane.sashpos(0))
+            total = max(pane.winfo_width(), 1)
+            pos = pane.sashpos(0)
+            set_value(key, _clamp_pos(total) if total > 80 else pos)
         except Exception:
             pass
 
     pane.bind('<Configure>', _restore, add='+')
     pane.bind('<ButtonRelease-1>', _save, add='+')
     pane.after(120, _restore)
+    pane.after(400, _restore)
 
 
-def create_horizontal_pane(parent, *, use_pack: bool = False):
+def ensure_pane_sash(
+    pane,
+    *,
+    get_value,
+    key: str,
+    default: int | None = None,
+    min_left: int = 300,
+    min_right: int = 240,
+    default_ratio: float = 0.62,
+) -> None:
+    """Force a sane sash split (e.g. after tab switch or data load)."""
+    try:
+        pane.update_idletasks()
+        total = max(pane.winfo_width(), 1)
+        if total < min_left + min_right:
+            return
+        saved = get_value(key, default)
+        pos = int(saved) if saved is not None else int(total * default_ratio)
+        lo = min_left
+        hi = max(min_left, total - min_right)
+        pane.sashpos(0, max(lo, min(pos, hi)))
+    except Exception:
+        pass
+
+
+def create_horizontal_pane(parent, *, use_pack: bool = False, min_left: int = 280, min_right: int = 220):
     """Return (panedwindow, left_frame, right_frame)."""
     pane = ttk.PanedWindow(parent, orient='horizontal')
     if use_pack:
@@ -193,6 +235,11 @@ def create_horizontal_pane(parent, *, use_pack: bool = False):
     right = ttk.Frame(pane, style='Card.TFrame')
     pane.add(left, weight=3)
     pane.add(right, weight=1)
+    try:
+        pane.paneconfig(left, minsize=min_left)
+        pane.paneconfig(right, minsize=min_right)
+    except Exception:
+        pass
     return pane, left, right
 
 
