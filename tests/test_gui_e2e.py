@@ -301,8 +301,9 @@ def test_disabled_category_lists_backups_and_offers_reenable(sandbox):
     assert len(rows) == 1
     vals = app.tree.item(rows[0])['values']
     assert vals[0] == 'SeededApp'
-    assert vals[1] == 'disabled'
-    assert 'app.exe' in vals[3]
+    assert vals[1] == 'Disabled backup'
+    assert vals[2] == 'disabled'
+    assert 'restorable' in str(vals[3]).lower()
 
     # Selecting a disabled entry flips the action button to re-enable mode
     app.tree.selection_set(rows[0])

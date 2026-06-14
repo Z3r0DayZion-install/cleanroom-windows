@@ -7,6 +7,8 @@ from pathlib import Path
 
 import brand
 
+_active_tray = None
+
 
 def _resource_path(name):
     here = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent.parent
@@ -38,34 +40,47 @@ def _ensure_icon_running_attr(icon) -> None:
         icon._running = False
 
 
-def _patch_pystray_icon_del() -> None:
-    """Guard pystray shutdown when Icon is GC'd before run() initializes _running."""
+def _patch_pystray_icon_lifecycle() -> None:
+    """Ensure Icon always has _running and __del__ never raises."""
     try:
+        import pystray
         from pystray import _win32
     except Exception:
         return
-    if getattr(_win32.Icon, '_cleanroom_del_patched', False):
-        return
-    _orig_del = _win32.Icon.__del__
 
-    def _safe_del(self):
-        _ensure_icon_running_attr(self)
-        try:
-            _orig_del(self)
-        except Exception:
-            pass
+    targets = []
+    for cls in (getattr(pystray, 'Icon', None), getattr(_win32, 'Icon', None)):
+        if cls is not None and cls not in targets:
+            targets.append(cls)
 
-    _win32.Icon.__del__ = _safe_del
-    _win32.Icon._cleanroom_del_patched = True
+    for cls in targets:
+        if getattr(cls, '_cleanroom_lifecycle_patched', False):
+            continue
+        orig_init = cls.__init__
+        orig_del = cls.__del__
+
+        def _init(self, *args, _orig=orig_init, **kwargs):
+            _orig(self, *args, **kwargs)
+            _ensure_icon_running_attr(self)
+
+        def _del(self, _orig=orig_del):
+            _ensure_icon_running_attr(self)
+            try:
+                _orig(self)
+            except Exception:
+                pass
+
+        cls.__init__ = _init
+        cls.__del__ = _del
+        cls._cleanroom_lifecycle_patched = True
 
 
-_patch_pystray_icon_del()
+_patch_pystray_icon_lifecycle()
 
 
 class TrayController:
     """System tray with product menu hierarchy and live proof-status tooltip."""
 
-    # Flat labels referenced by tests / docs
     MENU_LABELS = (
         'Open Cleanroom',
         'Run Scan',
@@ -90,37 +105,48 @@ class TrayController:
         self._stopping = False
 
     def start(self):
+        global _active_tray
         try:
             import pystray  # noqa: F401
         except ImportError:
             return False
+        if _active_tray is not None and _active_tray is not self:
+            try:
+                _active_tray.stop()
+            except Exception:
+                pass
+            _active_tray = None
         if self._thread and self._thread.is_alive():
+            _active_tray = self
             return True
         self._stopping = False
         self._thread = threading.Thread(target=self._run, name='cleanroom-tray', daemon=True)
         self._thread.start()
+        _active_tray = self
         return True
 
     def stop(self):
+        global _active_tray
         self._stopping = True
         icon = self._icon
         self._icon = None
-        if icon is None:
-            return
-        _ensure_icon_running_attr(icon)
-        try:
-            icon.stop()
-        except Exception:
-            pass
-        finally:
+        if icon is not None:
+            _ensure_icon_running_attr(icon)
             try:
-                icon._running = False
+                icon.stop()
             except Exception:
                 pass
+            finally:
+                try:
+                    icon._running = False
+                except Exception:
+                    pass
         thread = self._thread
         if thread and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=2.0)
+            thread.join(timeout=2.5)
         self._thread = None
+        if _active_tray is self:
+            _active_tray = None
 
     def refresh_tooltip(self):
         icon = self._icon

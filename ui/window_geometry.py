@@ -4,9 +4,9 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-DEFAULT_SIZE = (1050, 700)
-MIN_SIZE = (920, 560)
-MAX_SIZE = (1080, 780)
+DEFAULT_SIZE = (1150, 720)
+MIN_SIZE = (920, 580)
+MAX_SIZE = (1280, 820)
 MAX_HEIGHT_RATIO = 0.72  # prevent tall skinny windows (h/w)
 MARGIN = 28
 TASKBAR_RESERVE = 52

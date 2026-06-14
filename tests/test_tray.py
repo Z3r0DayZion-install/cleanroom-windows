@@ -93,6 +93,15 @@ def test_tray_stop_without_running_attr():
     assert getattr(icon, '_running', False) is False
 
 
+def test_tray_stop_clears_active_singleton():
+    import ui.tray as tray_mod
+    app = _FakeApp()
+    tray = TrayController(app)
+    tray_mod._active_tray = tray
+    tray.stop()
+    assert tray_mod._active_tray is None
+
+
 def test_tray_start_without_pystray_is_safe(monkeypatch):
     import sys
     monkeypatch.delitem(sys.modules, 'pystray', raising=False)

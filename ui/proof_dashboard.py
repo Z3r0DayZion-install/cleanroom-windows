@@ -511,5 +511,5 @@ def sidebar_nav_button(
         fg_color='transparent',
         hover_color=hover_color or sidebar_bg,
         text_color=text_color,
-        anchor='w', height=38, corner_radius=8,
+        anchor='w', height=42, corner_radius=8,
     )

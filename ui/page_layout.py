@@ -1,0 +1,182 @@
+"""Shared page layout contract — one sizing system for all workspace pages."""
+from __future__ import annotations
+
+import tkinter as tk
+from tkinter import ttk
+
+import customtkinter as ctk
+
+from ui import ctk_theme
+
+# Window / content shell contract (logical px at 100% scaling)
+CONTENT_MAX_WIDTH = 1180
+CONTENT_PADX = 10
+LAYOUT_MIN = (920, 580)
+LAYOUT_DEFAULT = (1150, 720)
+
+
+def classify_layout(width: int, height: int, *, scale: float = 1.0) -> str:
+    """Return compact | normal | wide for responsive rules."""
+    if width < 980 or height < 620 or scale >= 1.45:
+        return 'compact'
+    if width >= CONTENT_MAX_WIDTH + 80:
+        return 'wide'
+    return 'normal'
+
+
+def apply_centered_shell(body_grid, body_center, width: int) -> None:
+    """Center main content on ultrawide windows; full width below threshold."""
+    if width > CONTENT_MAX_WIDTH + 48:
+        gutter = max(0, (width - CONTENT_MAX_WIDTH) // 2)
+        body_center.grid(row=0, column=1, columnspan=1, sticky='nsew', padx=0)
+        body_grid.grid_columnconfigure(0, weight=1, minsize=gutter)
+        body_grid.grid_columnconfigure(
+            1, weight=0, minsize=min(CONTENT_MAX_WIDTH, width - 2 * gutter))
+        body_grid.grid_columnconfigure(2, weight=1, minsize=gutter)
+    else:
+        body_center.grid(row=0, column=0, columnspan=3, sticky='nsew')
+        body_grid.grid_columnconfigure(0, weight=1, minsize=0)
+        body_grid.grid_columnconfigure(1, weight=0, minsize=0)
+        body_grid.grid_columnconfigure(2, weight=0, minsize=0)
+
+
+class PageFrame(ttk.Frame):
+    """Standard page container — hero/toolbar fixed, body expands."""
+
+    def __init__(self, master, *, style='Content.TFrame'):
+        super().__init__(master, style=style)
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=0)
+        self.grid_rowconfigure(2, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+
+class PageHeader(ttk.Frame):
+    """Title + optional subtitle + right-aligned actions."""
+
+    def __init__(self, master, title: str, *, subtitle: str = '', bg_style='Content.TFrame'):
+        super().__init__(master, style=bg_style)
+        row = ttk.Frame(self, style=bg_style)
+        row.pack(fill='x')
+        ttk.Label(row, text=title, font=('Segoe UI', 13, 'bold')).pack(side='left')
+        self.subtitle_lbl = ttk.Label(row, text=subtitle, style='SubHeader.TLabel')
+        if subtitle:
+            self.subtitle_lbl.pack(side='left', padx=(10, 0))
+        self.actions = ttk.Frame(row, style=bg_style)
+        self.actions.pack(side='right')
+
+
+class EmptyStateCard:
+    """Polished empty state — replaces raw empty tables."""
+
+    def __init__(
+        self,
+        parent,
+        *,
+        card_bg: str,
+        title: str,
+        body: str,
+        button_text: str = '',
+        command=None,
+        proof: str = '#22C55E',
+    ):
+        self.frame = ctk_theme.frame(parent, card_bg, corner_radius=12)
+        inner = ttk.Frame(self.frame, style='Card.TFrame')
+        inner.place(relx=0.5, rely=0.44, anchor='center')
+        ttk.Label(
+            inner, text=title, font=('Segoe UI', 16, 'bold'), background=card_bg,
+        ).pack(anchor='center')
+        ttk.Label(
+            inner, text=body, style='Info.TLabel', wraplength=440, justify='center',
+        ).pack(anchor='center', pady=(8, 16))
+        self.button = None
+        if button_text and command:
+            self.button = ttk.Button(
+                inner, text=button_text, style='Primary.TButton', command=command)
+            self.button.pack(anchor='center')
+
+    def grid(self, **kwargs):
+        self.frame.grid(**kwargs)
+
+    def grid_remove(self):
+        self.frame.grid_remove()
+
+
+def sync_table_empty_view(
+    *,
+    has_rows: bool,
+    table_card,
+    detail_panel,
+    empty_panel,
+    hide_detail_when_empty: bool = True,
+) -> None:
+    """Show table+details when rows exist; otherwise show empty card only."""
+    if has_rows:
+        empty_panel.grid_remove()
+        table_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        detail_panel.grid(row=0, column=1, sticky='ns')
+    else:
+        table_card.grid_remove()
+        if hide_detail_when_empty:
+            detail_panel.grid_remove()
+        else:
+            detail_panel.grid(row=0, column=1, sticky='ns')
+        empty_panel.grid(row=0, column=0, columnspan=2, sticky='nsew')
+
+
+class DataTableFrame(ttk.Frame):
+    """Tree + scrollbars with stable minimum height."""
+
+    def __init__(self, master, tree: ttk.Treeview, *, min_height: int = 8):
+        super().__init__(master, style='Card.TFrame')
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        vsb = ttk.Scrollbar(self, orient='vertical', command=tree.yview)
+        hsb = ttk.Scrollbar(self, orient='horizontal', command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tree.configure(height=min_height)
+        tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+
+
+class DetailsPanel(ttk.Frame):
+    """Fixed-width details column for split views."""
+
+    def __init__(self, master, *, width: int = 300, style='Card.TFrame'):
+        super().__init__(master, width=width, style=style)
+        self.pack_propagate(False)
+        self.configure(width=width)
+        self.body = ttk.Frame(self, style='Card.TFrame')
+        self.body.pack(fill='both', expand=True, padx=12, pady=12)
+
+
+class SplitWorkspace(ttk.Frame):
+    """Table + details split with shared empty-state slot."""
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0)
+        self._table_host = ttk.Frame(self)
+        self._table_host.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        self._table_host.grid_rowconfigure(0, weight=1)
+        self._table_host.grid_columnconfigure(0, weight=1)
+        self._detail_host = ttk.Frame(self, width=300)
+        self._detail_host.grid(row=0, column=1, sticky='ns')
+        self._empty_host = ttk.Frame(self)
+        self._empty_host.grid(row=0, column=0, columnspan=2, sticky='nsew')
+        self._empty_host.grid_remove()
+        self.table_card = self._table_host
+        self.detail_panel = self._detail_host
+        self.empty_panel = self._empty_host
+
+    def set_empty(self, empty: bool, *, hide_detail: bool = True) -> None:
+        sync_table_empty_view(
+            has_rows=not empty,
+            table_card=self._table_host,
+            detail_panel=self._detail_host,
+            empty_panel=self._empty_host,
+            hide_detail_when_empty=hide_detail,
+        )

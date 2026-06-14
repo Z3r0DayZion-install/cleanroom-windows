@@ -4,7 +4,12 @@ import queue
 import brand
 import customtkinter as ctk
 from ui import ctk_theme
-from ui.launcher import run_launch_splash
+from ui.page_layout import (
+    CONTENT_MAX_WIDTH,
+    apply_centered_shell,
+    classify_layout,
+    sync_table_empty_view,
+)
 from ui.window_geometry import (
     apply_window_geometry, bind_window_tracking, animations_disabled,
     MAX_SIZE, MIN_SIZE, apply_dialog_geometry,
@@ -604,35 +609,24 @@ class StartupManagerGUI(ctk.CTk):
             return
         if w < 200:
             return
-        wrap = max(420, w - 300)
+        mode = classify_layout(w, h, scale=scale)
+        self._layout_mode = mode
+        wrap = max(420, min(720, w - 300))
         if hasattr(self, 'ctx_desc_lbl') and self.ctx_desc_lbl is not None:
             self.ctx_desc_lbl.configure(wraplength=wrap)
         if hasattr(self, 'ctx_next_lbl'):
             self.ctx_next_lbl.configure(wraplength=max(280, min(720, w - 340)))
         if getattr(self, 'ctx_subtitle_lbl', None) is not None:
-            if h < 680:
+            if mode == 'compact':
                 self.ctx_subtitle_lbl.pack_forget()
             else:
                 self.ctx_subtitle_lbl.pack(side='left', padx=(8, 0))
         if hasattr(self, '_brand_status_lbl'):
-            self._brand_status_lbl.configure(wraplength=max(140, min(168, w - 60)))
+            self._brand_status_lbl.configure(wraplength=max(140, min(200, w - 60)))
         if hasattr(self, '_proof_flow_lbl'):
             self._proof_flow_lbl.pack_forget()
-        if hasattr(self, '_home_recent'):
-            if h < 660:
-                self._home_recent.grid_remove()
-            else:
-                self._home_recent.grid(row=2, column=0, sticky='ew', padx=10, pady=(0, 6))
-        if hasattr(self, '_home_fs'):
-            if h < 640:
-                self._home_fs.grid_remove()
-            else:
-                self._home_fs.grid(row=3, column=0, sticky='ew', padx=10, pady=(0, 6))
-        if hasattr(self, '_home_rec'):
-            if h < 720:
-                self._home_rec.grid_remove()
-            else:
-                self._home_rec.grid(row=4, column=0, sticky='nsew', padx=10, pady=(0, 8))
+        if hasattr(self, '_body_grid') and hasattr(self, '_body_center'):
+            apply_centered_shell(self._body_grid, self._body_center, w)
         if hasattr(self, '_command_bar'):
             self._command_bar.set_compact_labels(w < 1000)
             try:
@@ -643,20 +637,7 @@ class StartupManagerGUI(ctk.CTk):
                 dashboard=getattr(self, '_page_is_dashboard', tab_idx == 0),
                 tab_idx=tab_idx,
             )
-        if hasattr(self, '_body_grid') and hasattr(self, '_body_center'):
-            content_max = min(MAX_SIZE[0], 1020)
-            if w > content_max + 48:
-                gutter = max(0, (w - content_max) // 2)
-                self._body_center.grid(row=0, column=1, columnspan=1, sticky='nsew', padx=0)
-                self._body_grid.grid_columnconfigure(0, weight=1, minsize=gutter)
-                self._body_grid.grid_columnconfigure(1, weight=0, minsize=min(content_max, w - 2 * gutter))
-                self._body_grid.grid_columnconfigure(2, weight=1, minsize=gutter)
-            else:
-                self._body_center.grid(row=0, column=0, columnspan=3, sticky='nsew')
-                self._body_grid.grid_columnconfigure(0, weight=1, minsize=0)
-                self._body_grid.grid_columnconfigure(1, weight=0, minsize=0)
-                self._body_grid.grid_columnconfigure(2, weight=0, minsize=0)
-        tree_rows = max(5, min(14, (h - 380) // 26))
+        tree_rows = max(5, min(12, (h - 420) // 28))
         if hasattr(self, 'cleanup_tree'):
             self.cleanup_tree.column('item', width=max(160, min(520, w - 380)))
         if hasattr(self, 'rec_tree'):
@@ -1131,14 +1112,23 @@ class StartupManagerGUI(ctk.CTk):
         if not hasattr(self, '_cleanup_empty_panel'):
             return
         empty = not self.cleanup_items
+        sync_table_empty_view(
+            has_rows=not empty,
+            table_card=self._cleanup_tree_card,
+            detail_panel=self._cleanup_detail_panel,
+            empty_panel=self._cleanup_empty_panel,
+            hide_detail_when_empty=True,
+        )
+        if hasattr(self, '_cleanup_chips'):
+            if empty:
+                self._cleanup_chips.grid_remove()
+                self._cleanup_tools.grid_remove()
+            else:
+                self._cleanup_chips.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 6))
+                self._cleanup_tools.grid(row=2, column=0, sticky='ew', padx=10, pady=(0, 4))
         if empty:
-            self._cleanup_tree_card.grid_remove()
-            self._cleanup_detail_panel.grid_remove()
-            self._cleanup_empty_panel.grid(row=0, column=0, columnspan=2, sticky='nsew')
-        else:
-            self._cleanup_empty_panel.grid_remove()
-            self._cleanup_tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
-            self._cleanup_detail_panel.grid(row=0, column=1, sticky='ns')
+            self._cleanup_detail_name.config(text='')
+            self._cleanup_detail_why.config(text='')
 
     def _build_context_bar(self, parent=None):
         """Workspace module header — title, purpose, and next action."""
@@ -1408,7 +1398,7 @@ class StartupManagerGUI(ctk.CTk):
     def _build_sidebar(self, parent):
         sidebar = ctk_theme.frame(parent, SIDEBAR_BG, corner_radius=10)
         sidebar.pack(side='left', fill='y', padx=(0, 12), pady=(0, 6))
-        sidebar.configure(width=232)
+        sidebar.configure(width=248)
         sidebar.pack_propagate(False)
         sidebar.grid_rowconfigure(1, weight=1)
         sidebar.grid_columnconfigure(0, weight=1)
@@ -1434,8 +1424,8 @@ class StartupManagerGUI(ctk.CTk):
         self._brand_pill_frame = identity['pill_frame']
 
         nav_scroll = ctk.CTkScrollableFrame(
-            sidebar, fg_color=SIDEBAR_BG, corner_radius=0, width=194,
-            scrollbar_button_color=BORDER, scrollbar_button_hover_color=ACCENT_SOFT,
+            sidebar, fg_color=SIDEBAR_BG, corner_radius=0, width=214,
+            scrollbar_button_color=BORDER, scrollbar_button_hover_color=HEAD_BG,
         )
         nav_scroll.grid(row=1, column=0, sticky='nsew', padx=4, pady=(0, 4))
         sidebar.grid_rowconfigure(1, weight=1)
@@ -1457,7 +1447,7 @@ class StartupManagerGUI(ctk.CTk):
         ):
             btn = sidebar_nav_button(
                 main_body, label, lambda i=idx: self._navigate_to_tab(i), **nav_kw)
-            btn.pack(fill='x', pady=4, padx=6)
+            btn.pack(fill='x', pady=6, padx=8)
             self._nav_buttons.append((idx, btn))
             self._add_tooltip(btn, tip)
 
@@ -1472,7 +1462,7 @@ class StartupManagerGUI(ctk.CTk):
         ):
             btn = sidebar_nav_button(
                 sys_body, label, lambda i=idx: self._navigate_to_tab(i), **nav_kw)
-            btn.pack(fill='x', pady=4, padx=6)
+            btn.pack(fill='x', pady=6, padx=8)
             self._nav_buttons.append((idx, btn))
             self._add_tooltip(btn, tip)
 
@@ -1500,7 +1490,7 @@ class StartupManagerGUI(ctk.CTk):
         ]
         for i, (label, cmd, tip) in enumerate(tools):
             btn = sidebar_nav_button(tools_body, label, cmd, **nav_kw)
-            btn.pack(fill='x', pady=4, padx=6)
+            btn.pack(fill='x', pady=6, padx=8)
             if i == 0:
                 self._sidebar_explorer_btn = btn
             self._add_tooltip(btn, tip)
@@ -1542,6 +1532,8 @@ class StartupManagerGUI(ctk.CTk):
         save_ui_prefs(prefs)
         self._update_context_panel()
         self._update_page_chrome(current)
+        if current == 3 and hasattr(self, '_update_cleanup_empty_state'):
+            self._update_cleanup_empty_state()
         self._lazy_load_tab(current)
 
     def _update_page_chrome(self, tab_idx=None):
@@ -1574,7 +1566,7 @@ class StartupManagerGUI(ctk.CTk):
             self._update_responsive_layout()
 
     def _build_optimizer_tab(self):
-        self.optimizer_tab.grid_rowconfigure(4, weight=1)
+        self.optimizer_tab.grid_rowconfigure(2, weight=1)
         self.optimizer_tab.grid_columnconfigure(0, weight=1)
 
         hero = ctk_theme.frame(self.optimizer_tab, CARD_BG, corner_radius=12)
@@ -1634,13 +1626,18 @@ class StartupManagerGUI(ctk.CTk):
         self.stat_cleanup_value = self._stat_card_compact(cards, 2, 'Cleanup candidates')
         self.stat_size_value = self._stat_card_compact(cards, 3, 'Reclaimable space')
 
-        recent = ttk.Frame(self.optimizer_tab, style='Content.TFrame')
-        recent.grid(row=2, column=0, sticky='ew', padx=10, pady=(0, 6))
-        self._home_recent = recent
-        ttk.Label(recent, text='Recent proof', font=('Segoe UI', 11, 'bold'),
+        self._home_scroll = ctk.CTkScrollableFrame(
+            self.optimizer_tab, fg_color=BG, corner_radius=0,
+            scrollbar_button_color=BORDER, scrollbar_button_hover_color=HEAD_BG,
+        )
+        self._home_scroll.grid(row=2, column=0, sticky='nsew', padx=10, pady=(0, 8))
+        self._home_recent = self._home_scroll
+        scroll = self._home_scroll
+
+        ttk.Label(scroll, text='Recent proof', font=('Segoe UI', 11, 'bold'),
                   background=BG).pack(anchor='w', pady=(0, 4))
-        recent_row = ttk.Frame(recent, style='Content.TFrame')
-        recent_row.pack(fill='x')
+        recent_row = ttk.Frame(scroll, style='Content.TFrame')
+        recent_row.pack(fill='x', pady=(0, 10))
         for col in range(3):
             recent_row.grid_columnconfigure(col, weight=1)
         tile_kw = dict(card_bg=CARD_BG, text_color=TEXT, muted=MUTED, accent=PROOF)
@@ -1654,8 +1651,8 @@ class StartupManagerGUI(ctk.CTk):
             recent_row, title='Latest proof pack', command=self.export_audit, **tile_kw)
         pc.grid(row=0, column=2, sticky='ew')
 
-        fs_card = ctk_theme.frame(self.optimizer_tab, CARD_BG, corner_radius=10)
-        fs_card.grid(row=3, column=0, sticky='ew', padx=10, pady=(0, 6))
+        fs_card = ctk_theme.frame(scroll, CARD_BG, corner_radius=10)
+        fs_card.pack(fill='x', pady=(0, 10))
         self._home_fs = fs_card
         fs_inner = ttk.Frame(fs_card, style='Card.TFrame')
         fs_inner.pack(fill='x', padx=12, pady=8)
@@ -1669,8 +1666,8 @@ class StartupManagerGUI(ctk.CTk):
         self.foresight_sub_lbl.pack(side='left', padx=(8, 0))
         self._add_tooltip(fs_card, 'Free-space trend summary — text only, no chart.')
 
-        rec_card = ttk.Frame(self.optimizer_tab, style='Card.TFrame')
-        rec_card.grid(row=4, column=0, sticky='nsew', padx=10, pady=(0, 8))
+        rec_card = ttk.Frame(scroll, style='Card.TFrame')
+        rec_card.pack(fill='both', expand=True)
         self._home_rec = rec_card
         rec_card.grid_rowconfigure(1, weight=1)
         rec_card.grid_columnconfigure(0, weight=1)
@@ -1735,9 +1732,12 @@ class StartupManagerGUI(ctk.CTk):
         self._rec_context_menu = None
         self.rec_empty_hint = self._make_empty_hint(
             self.rec_tree,
-            'No findings yet.\n\n'
-            'Click Scan to search your configured folders.\n'
-            'Cleanroom only shows reviewed candidates — every move gets a receipt.')
+            'No recommendations yet.\n\nRun Scan to review configured folders.\n'
+            'Cleanroom surfaces archive-first guidance with receipts.')
+        self._home_rec_empty = ttk.Label(
+            rec_card, text='No recommendations yet — run Scan to populate guidance.',
+            style='Info.TLabel', wraplength=640, justify='left')
+        self._home_rec_empty.pack_forget()
         self.schedule_btn = self.dashboard_secondary_btn
         self.open_archive_btn = self.dashboard_secondary_btn
         self.open_log_btn = self.dashboard_secondary_btn
@@ -1762,25 +1762,28 @@ class StartupManagerGUI(ctk.CTk):
         top.pack(fill='x', padx=10, pady=(0, 8))
         self._activity_top = top
 
-        trust_card = tk.Frame(top, bg=CARD_BG, highlightbackground=BORDER, highlightthickness=1)
-        trust_card.pack(side='left', padx=(0, 12))
-        self.trust_canvas = tk.Canvas(trust_card, width=100, height=100, bg=CARD_BG, highlightthickness=0)
-        self.trust_canvas.pack(side='left', padx=(12, 4), pady=10)
-        trust_txt = tk.Frame(trust_card, bg=CARD_BG)
-        trust_txt.pack(side='left', padx=(0, 16), pady=10)
-        tk.Label(trust_txt, text='CUSTODY TRUST SCORE', bg=CARD_BG, fg=MUTED,
-                 font=('Segoe UI', 8, 'bold')).pack(anchor='w')
-        self.trust_band_lbl = tk.Label(trust_txt, text='—', bg=CARD_BG, fg=TEXT,
-                                       font=('Segoe UI', 13, 'bold'))
-        self.trust_band_lbl.pack(anchor='w')
-        self.trust_sub_lbl = tk.Label(trust_txt, text='', bg=CARD_BG, fg=MUTED,
-                                      font=('Segoe UI', 9), wraplength=220, justify='left')
-        self.trust_sub_lbl.pack(anchor='w', pady=(4, 0))
+        proof_strip = ctk_theme.frame(top, PROOF_SOFT, corner_radius=10)
+        proof_strip.pack(side='left', fill='x', expand=True, padx=(0, 8))
+        proof_inner = ttk.Frame(proof_strip, style='Card.TFrame')
+        proof_inner.pack(fill='x', padx=12, pady=8)
+        ttk.Label(proof_inner, text='Proof summary', font=('Segoe UI', 9, 'bold'),
+                  background=PROOF_SOFT).pack(side='left')
+        self.trust_band_lbl = tk.Label(proof_inner, text='—', bg=PROOF_SOFT, fg=PROOF,
+                                       font=('Segoe UI', 12, 'bold'))
+        self.trust_band_lbl.pack(side='left', padx=(10, 0))
+        self.trust_sub_lbl = tk.Label(proof_inner, text='', bg=PROOF_SOFT, fg=TEXT,
+                                      font=('Segoe UI', 9), wraplength=360, justify='left')
+        self.trust_sub_lbl.pack(side='left', padx=(10, 0))
+        self.trust_canvas = tk.Canvas(proof_inner, width=1, height=1, bg=PROOF_SOFT, highlightthickness=0)
 
-        self.stat_act_total = self._stat_card(top, 'Actions logged')
-        self.stat_act_present = self._stat_card(top, 'Restorable now')
-        self.stat_act_bytes = self._stat_card(top, 'Bytes in custody')
-        self.stat_act_pruned = self._stat_card(top, 'Bytes pruned')
+        stats_wrap = ttk.Frame(top, style='Content.TFrame')
+        stats_wrap.pack(side='right')
+        for col in range(4):
+            stats_wrap.grid_columnconfigure(col, weight=1)
+        self.stat_act_total = self._stat_card_compact(stats_wrap, 0, 'Actions logged')
+        self.stat_act_present = self._stat_card_compact(stats_wrap, 1, 'Restorable now')
+        self.stat_act_bytes = self._stat_card_compact(stats_wrap, 2, 'Bytes in custody')
+        self.stat_act_pruned = self._stat_card_compact(stats_wrap, 3, 'Bytes pruned')
         self._add_tooltip(self.stat_act_bytes,
                           'Bytes in custody = verified files still restorable in the archive.')
         self._add_tooltip(self.stat_act_pruned,
@@ -2434,14 +2437,16 @@ class StartupManagerGUI(ctk.CTk):
         tree_frame.grid(row=0, column=0, sticky='nsew', padx=8, pady=8)
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
-        cols = ('name', 'source', 'location', 'command')
+        cols = ('name', 'type', 'source', 'status')
         self.tree = ttk.Treeview(tree_frame, columns=cols, show='headings', selectmode='browse')
-        for col, label in (('name', 'Name'), ('source', 'Source'), ('location', 'Location'), ('command', 'Command')):
+        for col, label in (
+            ('name', 'Name'), ('type', 'Type'), ('source', 'Source'), ('status', 'Status / Note'),
+        ):
             self.tree.heading(col, text=label, command=lambda c=col: self._sort_column(c))
-        self.tree.column('name', width=170, anchor='w', stretch=False)
-        self.tree.column('source', width=100, anchor='center', stretch=False)
-        self.tree.column('location', width=160, anchor='w', stretch=False)
-        self.tree.column('command', width=240, anchor='w', stretch=False)
+        self.tree.column('name', width=190, anchor='w', stretch=True)
+        self.tree.column('type', width=110, anchor='w', stretch=False)
+        self.tree.column('source', width=90, anchor='center', stretch=False)
+        self.tree.column('status', width=160, anchor='w', stretch=True)
         self.tree.tag_configure('oddrow', background=CARD_BG)
         self.tree.tag_configure('evenrow', background=ROW_ALT)
         self._startup_rows = []
@@ -2480,8 +2485,10 @@ class StartupManagerGUI(ctk.CTk):
             return lbl
 
         self.detail_name = _detail_row('Name', 'detail_name')
-        self.detail_source = _detail_row('Source', 'detail_source')
+        self.detail_type = _detail_row('Type', 'detail_type')
+        self.detail_status = _detail_row('Status', 'detail_status')
         self.detail_location = _detail_row('Location', 'detail_location')
+        self.detail_source = self.detail_type
 
         cmd_block = ttk.Frame(detail_inner, style='Card.TFrame')
         cmd_block.pack(fill='x', pady=(0, 8))
@@ -2553,6 +2560,7 @@ class StartupManagerGUI(ctk.CTk):
 
         chips = ttk.Frame(self.cleanup_tab, style='Content.TFrame')
         chips.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 6))
+        self._cleanup_chips = chips
         for col in range(4):
             chips.grid_columnconfigure(col, weight=1)
         self.cleanup_count_label = ttk.Label(chips, text='0 candidates', style='Badge.TLabel')
@@ -2566,6 +2574,7 @@ class StartupManagerGUI(ctk.CTk):
 
         tools = ttk.Frame(self.cleanup_tab, style='Content.TFrame')
         tools.grid(row=2, column=0, sticky='ew', padx=10, pady=(0, 4))
+        self._cleanup_tools = tools
         self.dedupe_check = ttk.Checkbutton(tools, text='Deduplicate', variable=self.dedupe_enabled)
         self.dedupe_check.pack(side='left')
         self.select_all_btn = ttk.Button(
@@ -4735,6 +4744,38 @@ class StartupManagerGUI(ctk.CTk):
         self._apply_filter()
         self._update_context_panel()
 
+    def _startup_type(self, entry):
+        source = ((entry or {}).get('source') or '').lower()
+        return {
+            'registry': 'Registry',
+            'folder': 'Folder',
+            'folders': 'Folder',
+            'task': 'Scheduled task',
+            'tasks': 'Scheduled task',
+            'disabled': 'Disabled backup',
+        }.get(source, source.replace('_', ' ').title() or 'Unknown')
+
+    def _startup_status(self, entry):
+        source = ((entry or {}).get('source') or '').lower()
+        if source == 'disabled':
+            return 'Disabled — restorable'
+        return 'Active'
+
+    def _startup_sort_key(self, item, key):
+        if key == 'type':
+            return self._startup_type(item).lower()
+        if key == 'status':
+            return self._startup_status(item).lower()
+        return (item.get(key) or '').lower()
+
+    def _startup_row_values(self, entry):
+        return (
+            entry.get('name') or '',
+            self._startup_type(entry),
+            entry.get('source') or '',
+            self._startup_status(entry),
+        )
+
     def _sort_column(self, col):
         reverse = self.current_sort[0] == col and not self.current_sort[1]
         self.current_sort = (col, reverse)
@@ -4784,13 +4825,11 @@ class StartupManagerGUI(ctk.CTk):
                     rows.append(v)
 
         key = self.current_sort[0]
-        rows.sort(key=lambda item: (item.get(key) or '').lower(), reverse=self.current_sort[1])
+        rows.sort(key=lambda item: self._startup_sort_key(item, key), reverse=self.current_sort[1])
 
         def build_row(idx, v):
             tag = 'evenrow' if idx % 2 else 'oddrow'
-            cmd = v.get('command') or ''
-            short_cmd = (cmd[:42] + '…') if len(cmd) > 45 else cmd
-            return (str(idx), (v['name'], v['source'], v['location'], short_cmd), (tag,))
+            return (str(idx), self._startup_row_values(v), (tag,))
 
         def on_complete():
             self._startup_rows = list(rows)
@@ -6977,6 +7016,11 @@ class StartupManagerGUI(ctk.CTk):
                                  values=(r['severity'].upper(), r['title'], r['detail']),
                                  tags=(r['severity'], stripe))
         self._refresh_empty_hint(self.rec_empty_hint, self.rec_tree)
+        if hasattr(self, '_home_rec_empty'):
+            if recs:
+                self._home_rec_empty.pack_forget()
+            else:
+                self._home_rec_empty.pack(anchor='w', padx=10, pady=(0, 8))
         if recs:
             self.rec_tree.selection_set('0')
             self.rec_tree.focus('0')
@@ -7501,7 +7545,8 @@ class StartupManagerGUI(ctk.CTk):
         ent = self._selected_entry()
         if not ent:
             self.detail_name.config(text='—')
-            self.detail_source.config(text='—')
+            self.detail_type.config(text='—')
+            self.detail_status.config(text='—')
             self.detail_location.config(text='—')
             self.detail_command_text.configure(state='normal')
             self.detail_command_text.delete('1.0', 'end')
@@ -7511,7 +7556,8 @@ class StartupManagerGUI(ctk.CTk):
             self._update_context_panel()
             return
         self.detail_name.config(text=ent.get('name') or '—')
-        self.detail_source.config(text=ent.get('source') or '—')
+        self.detail_type.config(text=self._startup_type(ent))
+        self.detail_status.config(text=self._startup_status(ent))
         self.detail_location.config(text=ent.get('location') or '—')
         self.detail_command_text.configure(state='normal')
         self.detail_command_text.delete('1.0', 'end')
