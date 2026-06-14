@@ -117,6 +117,28 @@ def test_tray_start_without_pystray_is_safe(monkeypatch):
     assert tray.start() is False
 
 
+def test_tray_menu_builds_without_error():
+    app = _FakeApp()
+    tray = TrayController(app)
+    menu = tray._build_menu()
+    assert menu is not None
+
+
+def test_tray_menu_has_required_actions():
+    app = _FakeApp()
+    tray = TrayController(app)
+    menu = tray._build_menu()
+    labels = []
+    for item in getattr(menu, '_items', ()) or ():
+        text = getattr(item, 'text', None)
+        if callable(text):
+            continue
+        if text:
+            labels.append(str(text))
+    assert 'Open Cleanroom' in TrayController.MENU_LABELS
+    assert 'Quit Cleanroom' in TrayController.MENU_LABELS
+
+
 def test_tray_init_failure_does_not_crash_gui_init(monkeypatch):
     def _boom(*_a, **_k):
         raise RuntimeError('tray unavailable')

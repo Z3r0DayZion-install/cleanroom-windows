@@ -1,11 +1,15 @@
 """Windows notification-area tray for Cleanroom — optional, failure-safe."""
 from __future__ import annotations
 
+import logging
+import os
 import sys
 import threading
 from pathlib import Path
 
 import brand
+
+logger = logging.getLogger(__name__)
 
 _active_tray = None
 
@@ -30,18 +34,20 @@ def _load_tray_image():
             path = brand.ICON_PNG_PATH if rel.endswith('.png') else brand.ICON_ICO_PATH
         if path.is_file():
             img = Image.open(path)
-            return img.convert('RGBA') if img.mode != 'RGBA' else img
-    return Image.new('RGBA', (64, 64), (59, 130, 246, 255))
+            img = img.convert('RGBA') if img.mode != 'RGBA' else img
+            # Windows notification area reads best at 16–64 px.
+            if max(img.size) > 64:
+                img = img.resize((64, 64), Image.LANCZOS)
+            return img
+    return Image.new('RGBA', (64, 64), (34, 197, 94, 255))
 
 
 def _ensure_icon_running_attr(icon) -> None:
-    """pystray Icon.__del__ reads _running; set it before stop/GC to avoid tracebacks."""
     if icon is not None and not hasattr(icon, '_running'):
         icon._running = False
 
 
 def _patch_pystray_icon_lifecycle() -> None:
-    """Ensure Icon always has _running and __del__ never raises."""
     try:
         import pystray
         from pystray import _win32
@@ -101,50 +107,93 @@ class TrayController:
     def __init__(self, app):
         self._app = app
         self._icon = None
-        self._thread = None
+        self._ready = threading.Event()
         self._stopping = False
+        self.last_error = ''
 
-    def start(self):
+    @property
+    def is_running(self) -> bool:
+        icon = self._icon
+        if icon is None:
+            return False
+        try:
+            return bool(getattr(icon, 'visible', True))
+        except Exception:
+            return True
+
+    def start(self) -> bool:
         global _active_tray
+        self.last_error = ''
         try:
             import pystray  # noqa: F401
-        except ImportError:
+        except ImportError as exc:
+            self.last_error = f'pystray is not installed ({exc})'
+            logger.warning('Tray unavailable: %s', self.last_error)
             return False
+
         if _active_tray is not None and _active_tray is not self:
             try:
                 _active_tray.stop()
             except Exception:
                 pass
             _active_tray = None
-        if self._thread and self._thread.is_alive():
+
+        if self._icon is not None and self.is_running:
             _active_tray = self
             return True
+
         self._stopping = False
-        self._thread = threading.Thread(target=self._run, name='cleanroom-tray', daemon=True)
-        self._thread.start()
+        self._ready.clear()
+        try:
+            self._start_icon()
+        except Exception as exc:
+            self.last_error = str(exc)
+            logger.exception('Tray failed to start')
+            return False
+
+        if not self._ready.wait(timeout=8.0):
+            self.last_error = self.last_error or 'Tray icon did not become ready in time'
+            logger.error('Tray start timeout: %s', self.last_error)
+            self.stop()
+            return False
+
         _active_tray = self
         return True
+
+    def _start_icon(self):
+        import pystray
+
+        image = _load_tray_image()
+        icon_name = f'Cleanroom-{os.getpid()}'
+        icon = pystray.Icon(
+            icon_name,
+            image,
+            self._tooltip_text(),
+            menu=self._build_menu(),
+        )
+        _ensure_icon_running_attr(icon)
+        self._icon = icon
+        icon.run_detached()
+        self._ready.set()
+        logger.info('Tray icon started (%s)', icon_name)
 
     def stop(self):
         global _active_tray
         self._stopping = True
         icon = self._icon
         self._icon = None
+        self._ready.clear()
         if icon is not None:
             _ensure_icon_running_attr(icon)
             try:
                 icon.stop()
             except Exception:
-                pass
+                logger.debug('Tray icon stop raised', exc_info=True)
             finally:
                 try:
                     icon._running = False
                 except Exception:
                     pass
-        thread = self._thread
-        if thread and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=2.5)
-        self._thread = None
         if _active_tray is self:
             _active_tray = None
 
@@ -195,11 +244,8 @@ class TrayController:
     def _build_menu(self):
         from pystray import Menu, MenuItem as item
 
-        def _status_item(text):
-            return item(lambda t: self._status_menu_text(), lambda: None, enabled=False)
-
         return Menu(
-            _status_item('status'),
+            item(lambda text: self._status_menu_text(), None, enabled=False),
             Menu.SEPARATOR,
             item('Open Cleanroom', self._on_open),
             item('Run Scan', self._on_run_scan, enabled=lambda _: self._can_scan()),
@@ -209,50 +255,20 @@ class TrayController:
             item('Open Proof Pack', self._on_proof_pack),
             item('Open Archive Folder', self._on_archive_folder),
             Menu.SEPARATOR,
-            Menu(
-                'Tools',
+            item('Tools', Menu(
                 item('Explorer Context Menus', self._on_explorer_menus),
                 item('Registry Snapshot', self._on_registry_snapshot),
                 item('Cleanroom Rewind', self._on_rewind),
                 item('Custody Check', self._on_custody_check),
-            ),
-            Menu(
-                'Window',
+            )),
+            item('Window', Menu(
                 item('Hide to tray', self._on_hide),
                 item('Show', self._on_show),
                 item('Restore', self._on_restore_tab),
-            ),
+            )),
             Menu.SEPARATOR,
             item('Quit Cleanroom', self._on_quit),
         )
-
-    def _run(self):
-        icon = None
-        try:
-            import pystray
-
-            image = _load_tray_image()
-            icon = pystray.Icon(
-                'Cleanroom',
-                image,
-                self._tooltip_text(),
-                menu=self._build_menu,
-            )
-            _ensure_icon_running_attr(icon)
-            if self._stopping:
-                return
-            self._icon = icon
-            icon.run()
-        except Exception:
-            pass
-        finally:
-            if self._icon is icon:
-                self._icon = None
-            if icon is not None:
-                try:
-                    icon._running = False
-                except Exception:
-                    pass
 
     def _schedule(self, fn):
         try:

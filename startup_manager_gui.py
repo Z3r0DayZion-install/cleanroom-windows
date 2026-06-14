@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import queue
 import brand
@@ -6,9 +7,9 @@ import customtkinter as ctk
 from ui import ctk_theme
 from ui.launcher import run_launch_splash
 from ui.page_layout import (
-    CONTENT_MAX_WIDTH,
-    apply_centered_shell,
+    bind_pane_persistence,
     classify_layout,
+    create_horizontal_pane,
     sync_table_empty_view,
 )
 from ui.window_geometry import (
@@ -321,6 +322,8 @@ def apply_palette(name):
 
 apply_palette(load_ui_prefs().get('theme', 'dark'))
 
+logger = logging.getLogger(__name__)
+
 APP_VERSION = brand.APP_VERSION
 SEARCH_PLACEHOLDER = 'Search startup items...  (Ctrl+F)'
 
@@ -479,6 +482,8 @@ class StartupManagerGUI(ctk.CTk):
             self.after(350, self._pulse_proof_flow)
         self._init_tray()
         self._apply_initial_tab()
+        if hasattr(self, '_shell_pane'):
+            self._bind_pane(self._shell_pane, 'shell_sidebar', default=248)
         self._update_page_chrome()
         self._update_brand_identity()
         self.after(250, self._post_paint_launch_tasks)
@@ -527,14 +532,52 @@ class StartupManagerGUI(ctk.CTk):
         if loader:
             loader()
 
+    def _pane_pref(self, key, default=None):
+        return (load_ui_prefs().get('pane_sizes') or {}).get(key, default)
+
+    def _save_pane_pref(self, key, value):
+        prefs = load_ui_prefs()
+        sizes = dict(prefs.get('pane_sizes') or {})
+        sizes[key] = int(value)
+        prefs['pane_sizes'] = sizes
+        save_ui_prefs(prefs)
+
+    def _bind_pane(self, pane, key, default=None):
+        bind_pane_persistence(
+            pane, key,
+            get_value=lambda k, d=default: self._pane_pref(k, d),
+            set_value=self._save_pane_pref,
+            default=default,
+        )
+
+    def _show_tray_unavailable(self, reason: str = ''):
+        host = getattr(self, '_hdr_top', None)
+        if host is None or getattr(self, '_tray_warning', None):
+            return
+        msg = reason.strip() or 'Tray icon unavailable.'
+        self._tray_warning = ctk_theme.frame(host, '#3F1D1D', corner_radius=8)
+        self._tray_warning.pack(fill='x', pady=(0, 4))
+        ctk_theme.label(
+            self._tray_warning,
+            f'Tray icon unavailable. Cleanroom is still running normally. ({msg})',
+            text_color='#FCA5A5', font_size=9, wraplength=900, justify='left',
+        ).pack(anchor='w', padx=12, pady=8)
+        logger.warning('Tray unavailable: %s', msg)
+
     def _init_tray(self):
         try:
             from ui.tray import TrayController
             self._tray = TrayController(self)
             if not self._tray.start():
+                err = self._tray.last_error or 'Tray icon could not start'
                 self._tray = None
-        except Exception:
+                self._show_tray_unavailable(err)
+                return
+            logger.info('Tray icon active')
+        except Exception as exc:
             self._tray = None
+            self._show_tray_unavailable(str(exc))
+            logger.exception('Tray init failed')
 
     def _on_window_close(self):
         tray = getattr(self, '_tray', None)
@@ -626,8 +669,6 @@ class StartupManagerGUI(ctk.CTk):
             self._brand_status_lbl.configure(wraplength=max(140, min(200, w - 60)))
         if hasattr(self, '_proof_flow_lbl'):
             self._proof_flow_lbl.pack_forget()
-        if hasattr(self, '_body_grid') and hasattr(self, '_body_center'):
-            apply_centered_shell(self._body_grid, self._body_center, w)
         if hasattr(self, '_command_bar'):
             self._command_bar.set_compact_labels(w < 1000)
             try:
@@ -645,14 +686,20 @@ class StartupManagerGUI(ctk.CTk):
             self.rec_tree.configure(height=tree_rows)
         if hasattr(self, 'archive_tree'):
             self.archive_tree.configure(height=tree_rows)
-        if hasattr(self, '_layout_restore_split'):
-            self._layout_restore_split(w)
-        if hasattr(self, '_layout_archive_split'):
-            self._layout_archive_split(w)
-        if hasattr(self, '_layout_startup_split'):
-            self._layout_startup_split(w)
-        if hasattr(self, '_layout_activity_split'):
-            self._layout_activity_split(w)
+        detail_w = max(200, min(420, int(w * 0.30)))
+        detail_wrap = max(180, detail_w - 28)
+        for attr in (
+            '_act_detail_src', '_act_detail_dest', '_act_detail_hint',
+            '_act_detail_type', '_act_detail_when', '_act_detail_custody',
+            'detail_name', 'detail_location', 'detail_hint',
+            '_archive_detail_src', '_archive_detail_dest',
+            '_archive_detail_meta', '_archive_detail_rank',
+            'restore_detail_src', 'restore_detail_dest',
+        ):
+            if hasattr(self, attr):
+                getattr(self, attr).configure(wraplength=detail_wrap)
+        if hasattr(self, '_archive_subheader'):
+            self._archive_subheader.configure(wraplength=max(320, w - 180))
         if hasattr(self, '_uninst_quiet_cb'):
             compact_uninst = w < 980
             if compact_uninst:
@@ -666,12 +713,6 @@ class StartupManagerGUI(ctk.CTk):
             else:
                 self.uninst_force_btn.pack(side='right', padx=6)
             self.uninst_uninstall_btn.pack(side='right', padx=6)
-        preview_w = max(240, min(360, int(max(w - 280, 640) * 0.34)))
-        if hasattr(self, '_restore_preview_panel'):
-            self._restore_preview_panel.configure(width=preview_w)
-        for attr in ('restore_detail_src', 'restore_detail_dest'):
-            if hasattr(self, attr):
-                getattr(self, attr).configure(wraplength=max(180, preview_w - 24))
         if hasattr(self, '_activity_top') and hasattr(self, 'act_refresh_btn'):
             try:
                 scale = float(self.tk.call('tk', 'scaling'))
@@ -694,134 +735,11 @@ class StartupManagerGUI(ctk.CTk):
                 self._activity_bar.pack_forget()
             else:
                 self._activity_bar.pack(fill='x', padx=10, pady=(0, 6))
-        if hasattr(self, '_startup_detail_panel'):
-            if h < 580:
-                self._startup_detail_panel.grid_remove()
-            else:
-                self._layout_startup_split(w)
         wrap = max(420, w - 340)
         for attr in ('uninst_detail_what', 'uninst_detail_does',
                      'uninst_detail_need', 'uninst_detail_uninst'):
             if hasattr(self, attr):
                 getattr(self, attr).configure(wraplength=wrap)
-
-    def _layout_restore_split(self, window_width):
-        if not hasattr(self, '_restore_frame'):
-            return
-        try:
-            content_w = self.tab_control.winfo_width()
-        except Exception:
-            content_w = max(window_width - 260, 640)
-        mode = 'stacked' if content_w < 980 else 'wide'
-        if mode == getattr(self, '_restore_split_mode', 'wide'):
-            return
-        self._restore_split_mode = mode
-        left = self._restore_left
-        right = self._restore_preview_panel
-        left.pack_forget()
-        right.pack_forget()
-        if mode == 'stacked':
-            left.pack(fill='both', expand=True)
-            right.configure(width=max(280, content_w - 40))
-            right.pack(fill='x', pady=(8, 0))
-            right.pack_propagate(True)
-        else:
-            right.configure(width=max(260, min(360, int(content_w * 0.34))))
-            left.pack(side='left', fill='both', expand=True)
-            right.pack(side='left', fill='y', padx=(8, 0))
-            right.pack_propagate(False)
-
-    def _layout_activity_split(self, window_width):
-        if not hasattr(self, '_activity_container'):
-            return
-        try:
-            content_w = self.tab_control.winfo_width()
-        except Exception:
-            content_w = max(window_width - 260, 640)
-        mode = 'stacked' if content_w < 980 else 'wide'
-        detail_w = max(260, min(340, int(content_w * 0.34)))
-        if hasattr(self, '_activity_detail_panel'):
-            self._activity_detail_panel.configure(width=detail_w)
-        for attr in ('_act_detail_src', '_act_detail_dest', '_act_detail_hint',
-                     '_act_detail_type', '_act_detail_when', '_act_detail_custody'):
-            if hasattr(self, attr):
-                getattr(self, attr).configure(wraplength=max(180, detail_w - 24))
-        if mode == getattr(self, '_activity_split_mode', None):
-            return
-        self._activity_split_mode = mode
-        tree = self._activity_tree_card
-        detail = self._activity_detail_panel
-        tree.grid_forget()
-        detail.grid_forget()
-        if mode == 'stacked':
-            tree.grid(row=0, column=0, sticky='nsew')
-            detail.grid(row=1, column=0, sticky='ew', pady=(8, 0))
-        else:
-            tree.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
-            detail.grid(row=0, column=1, sticky='ns')
-
-    def _layout_startup_split(self, window_width):
-        if not hasattr(self, '_startup_container'):
-            return
-        try:
-            content_w = self.tab_control.winfo_width()
-        except Exception:
-            content_w = max(window_width - 260, 640)
-        mode = 'stacked' if content_w < 980 else 'wide'
-        detail_w = max(260, min(340, int(content_w * 0.34)))
-        if hasattr(self, '_startup_detail_panel'):
-            self._startup_detail_panel.configure(width=detail_w)
-        if hasattr(self, 'detail_command_text'):
-            self.detail_command_text.configure(width=max(24, detail_w // 8))
-        for attr in ('detail_name', 'detail_source', 'detail_location', 'detail_hint'):
-            if hasattr(self, attr):
-                getattr(self, attr).configure(wraplength=max(180, detail_w - 24))
-        if mode == getattr(self, '_startup_split_mode', None):
-            return
-        self._startup_split_mode = mode
-        tree_card = self._startup_tree_card
-        detail = self._startup_detail_panel
-        tree_card.grid_forget()
-        detail.grid_forget()
-        if mode == 'stacked':
-            tree_card.grid(row=0, column=0, sticky='nsew')
-            detail.grid(row=1, column=0, sticky='ew', pady=(8, 0))
-        else:
-            tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
-            detail.grid(row=0, column=1, sticky='ns')
-
-    def _layout_archive_split(self, window_width):
-        if not hasattr(self, '_archive_body'):
-            return
-        try:
-            content_w = self.tab_control.winfo_width()
-        except Exception:
-            content_w = max(window_width - 260, 640)
-        mode = 'stacked' if content_w < 1020 else 'wide'
-        detail_w = max(260, min(340, int(content_w * 0.32)))
-        if hasattr(self, '_archive_detail_panel'):
-            self._archive_detail_panel.configure(width=detail_w)
-        wrap = max(180, detail_w - 28)
-        for attr in ('_archive_detail_src', '_archive_detail_dest',
-                     '_archive_detail_meta', '_archive_detail_rank'):
-            if hasattr(self, attr):
-                getattr(self, attr).configure(wraplength=wrap)
-        if hasattr(self, '_archive_subheader'):
-            self._archive_subheader.configure(wraplength=max(320, content_w - 180))
-        if mode == getattr(self, '_archive_split_mode', 'wide'):
-            return
-        self._archive_split_mode = mode
-        tree_card = self._archive_tree_card
-        detail = self._archive_detail_panel
-        tree_card.grid_forget()
-        detail.grid_forget()
-        if mode == 'stacked':
-            tree_card.grid(row=0, column=0, sticky='nsew')
-            detail.grid(row=1, column=0, sticky='ew', pady=(8, 0))
-            detail.configure(width=max(280, content_w - 40))
-        else:
-            tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
-            detail.grid(row=0, column=1, sticky='ns')
 
     # ------------------------------------------------------------------
     # Styling
@@ -906,30 +824,23 @@ class StartupManagerGUI(ctk.CTk):
     # Widget construction
     # ------------------------------------------------------------------
     def create_widgets(self):
-        self._body_grid = ttk.Frame(self)
-        self._body_grid.pack(fill='both', expand=True)
-        self._body_grid.grid_rowconfigure(0, weight=1)
-        self._body_grid.grid_columnconfigure(0, weight=1)
-        self._body_grid.grid_columnconfigure(1, weight=0)
-        self._body_grid.grid_columnconfigure(2, weight=1)
-        ttk.Frame(self._body_grid).grid(row=0, column=0, sticky='nsew')
-        self._body_center = tk.Frame(self._body_grid, bg=BG)
-        self._body_center.grid(row=0, column=0, columnspan=3, sticky='nsew')
-        self._body_grid.grid_columnconfigure(0, weight=1)
-        self._body_grid.grid_columnconfigure(1, weight=0)
-        self._body_grid.grid_columnconfigure(2, weight=0)
-        ttk.Frame(self._body_grid).grid(row=0, column=2, sticky='nsew')
+        self._body_center = tk.Frame(self, bg=BG)
+        self._body_center.pack(fill='both', expand=True)
 
         shell = self._body_center
         self._build_header(shell)
         self._build_context_bar(shell)
         main = ttk.Frame(shell)
         main.pack(fill='both', expand=True, padx=10, pady=(0, 0))
-        self._build_sidebar(main)
+        self._shell_pane = ttk.PanedWindow(main, orient='horizontal')
+        self._shell_pane.pack(fill='both', expand=True, pady=(0, 6))
+        sidebar_host = ttk.Frame(self._shell_pane)
+        content_host = ttk.Frame(self._shell_pane)
+        self._shell_pane.add(sidebar_host, weight=0)
+        self._shell_pane.add(content_host, weight=1)
+        self._build_sidebar(sidebar_host)
 
-        content = ttk.Frame(main)
-        content.pack(side='left', fill='both', expand=True)
-        self.tab_control = ttk.Notebook(content)
+        self.tab_control = ttk.Notebook(content_host)
         self.tab_control.pack(fill='both', expand=True)
 
         self.optimizer_tab = ttk.Frame(self.tab_control, style='Content.TFrame')
@@ -1118,6 +1029,7 @@ class StartupManagerGUI(ctk.CTk):
             table_card=self._cleanup_tree_card,
             detail_panel=self._cleanup_detail_panel,
             empty_panel=self._cleanup_empty_panel,
+            pane=getattr(self, '_cleanup_pane', None),
             hide_detail_when_empty=True,
         )
         if hasattr(self, '_cleanup_chips'):
@@ -1127,9 +1039,6 @@ class StartupManagerGUI(ctk.CTk):
             else:
                 self._cleanup_chips.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 6))
                 self._cleanup_tools.grid(row=2, column=0, sticky='ew', padx=10, pady=(0, 4))
-        if empty:
-            self._cleanup_detail_name.config(text='')
-            self._cleanup_detail_why.config(text='')
 
     def _build_context_bar(self, parent=None):
         """Workspace module header — title, purpose, and next action."""
@@ -1398,7 +1307,7 @@ class StartupManagerGUI(ctk.CTk):
 
     def _build_sidebar(self, parent):
         sidebar = ctk_theme.frame(parent, SIDEBAR_BG, corner_radius=10)
-        sidebar.pack(side='left', fill='y', padx=(0, 12), pady=(0, 6))
+        sidebar.pack(fill='both', expand=True)
         sidebar.configure(width=248)
         sidebar.pack_propagate(False)
         sidebar.grid_rowconfigure(1, weight=1)
@@ -1678,8 +1587,10 @@ class StartupManagerGUI(ctk.CTk):
         rec_body.grid(row=1, column=0, sticky='nsew', padx=10, pady=(0, 8))
         rec_body.grid_rowconfigure(0, weight=1)
         rec_body.grid_columnconfigure(0, weight=1)
-        rec_left = ttk.Frame(rec_body, style='Card.TFrame')
-        rec_left.grid(row=0, column=0, sticky='nsew')
+
+        self._home_rec_pane, rec_left, rec_right = create_horizontal_pane(rec_body)
+        self._bind_pane(self._home_rec_pane, 'home_rec_split', default=480)
+
         rec_left.grid_rowconfigure(0, weight=1)
         rec_left.grid_columnconfigure(0, weight=1)
         self.rec_tree = ttk.Treeview(rec_left, columns=('severity', 'title', 'detail'),
@@ -1695,7 +1606,7 @@ class StartupManagerGUI(ctk.CTk):
         self.rec_tree.grid(row=0, column=0, sticky='nsew')
         rec_scroll.grid(row=0, column=1, sticky='ns')
         self.receipt_printer = ProofDrawer(
-            rec_body,
+            rec_right,
             panel_bg=CARD_BG,
             paper_bg='#E8EDF4',
             accent=ACCENT,
@@ -1705,7 +1616,7 @@ class StartupManagerGUI(ctk.CTk):
             width=240,
             height=200,
         )
-        self.receipt_printer.grid(row=0, column=1, sticky='ns', padx=(8, 0))
+        self.receipt_printer.pack(fill='both', expand=True, padx=(4, 0))
         self.receipt_printer.show_idle('Select a recommendation to view proof details.')
         rec_actions = ttk.Frame(rec_left, style='Card.TFrame')
         rec_actions.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(6, 0))
@@ -1735,10 +1646,22 @@ class StartupManagerGUI(ctk.CTk):
             self.rec_tree,
             'No recommendations yet.\n\nRun Scan to review configured folders.\n'
             'Cleanroom surfaces archive-first guidance with receipts.')
-        self._home_rec_empty = ttk.Label(
-            rec_card, text='No recommendations yet — run Scan to populate guidance.',
-            style='Info.TLabel', wraplength=640, justify='left')
-        self._home_rec_empty.pack_forget()
+        self._home_rec_empty_panel = ctk_theme.frame(rec_body, CARD_BG, corner_radius=12)
+        empty_inner = ttk.Frame(self._home_rec_empty_panel, style='Card.TFrame')
+        empty_inner.place(relx=0.5, rely=0.42, anchor='center')
+        ttk.Label(
+            empty_inner, text='No recommendations yet.',
+            font=('Segoe UI', 14, 'bold'), background=CARD_BG,
+        ).pack(anchor='center')
+        ttk.Label(
+            empty_inner,
+            text='Run Scan to review configured folders.\nCleanroom surfaces archive-first guidance with receipts.',
+            style='Info.TLabel', wraplength=420, justify='center',
+        ).pack(anchor='center', pady=(8, 16))
+        ttk.Button(
+            empty_inner, text='Scan Now', style='Primary.TButton', command=self.refresh_cleanup,
+        ).pack(anchor='center')
+        self._home_rec_empty = self._home_rec_empty_panel
         self.schedule_btn = self.dashboard_secondary_btn
         self.open_archive_btn = self.dashboard_secondary_btn
         self.open_log_btn = self.dashboard_secondary_btn
@@ -1795,12 +1718,14 @@ class StartupManagerGUI(ctk.CTk):
         self.act_sub_notebook = None
         self._activity_container = ttk.Frame(self.activity_tab, style='Card.TFrame')
         self._activity_container.pack(fill='both', expand=True, padx=10, pady=(0, 10))
-        self._activity_container.grid_rowconfigure(0, weight=1)
-        self._activity_container.grid_columnconfigure(0, weight=1)
 
-        tree_card = ttk.Frame(self._activity_container, style='Card.TFrame')
+        self._activity_pane, activity_left, activity_right = create_horizontal_pane(
+            self._activity_container, use_pack=True)
+        self._bind_pane(self._activity_pane, 'activity_split', default=520)
+
+        tree_card = ttk.Frame(activity_left, style='Card.TFrame')
         self._activity_tree_card = tree_card
-        tree_card.grid(row=0, column=0, sticky='nsew')
+        tree_card.pack(fill='both', expand=True)
         tree_card.grid_rowconfigure(0, weight=1)
         tree_card.grid_columnconfigure(0, weight=1)
         cols = ('status', 'when', 'type', 'reason', 'item', 'size')
@@ -1828,8 +1753,8 @@ class StartupManagerGUI(ctk.CTk):
         self._activity_feed = []
         self._activity_split_mode = None
 
-        self._activity_detail_panel = ttk.Frame(self._activity_container, style='Card.TFrame')
-        self._activity_detail_panel.grid(row=0, column=1, sticky='ns')
+        self._activity_detail_panel = ttk.Frame(activity_right, style='Card.TFrame')
+        self._activity_detail_panel.pack(fill='both', expand=True)
         act_detail = ttk.Frame(self._activity_detail_panel, style='Card.TFrame')
         act_detail.pack(fill='both', expand=True, padx=12, pady=12)
         ttk.Label(act_detail, text='Proof details', font=('Segoe UI', 11, 'bold'),
@@ -1973,9 +1898,12 @@ class StartupManagerGUI(ctk.CTk):
         self._archive_body.grid_rowconfigure(0, weight=1)
         self._archive_body.grid_columnconfigure(0, weight=1)
 
-        tree_card = ctk_theme.frame(self._archive_body, CARD_BG, corner_radius=10)
+        self._archive_pane, archive_left, archive_right = create_horizontal_pane(self._archive_body)
+        self._bind_pane(self._archive_pane, 'archive_split', default=520)
+
+        tree_card = ctk_theme.frame(archive_left, CARD_BG, corner_radius=10)
         self._archive_tree_card = tree_card
-        tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        tree_card.pack(fill='both', expand=True)
         ttk.Label(tree_card, text='Custody records', font=('Segoe UI', 10, 'bold'),
                   background=CARD_BG).pack(anchor='w', padx=10, pady=(8, 0))
         tree_wrap = ttk.Frame(tree_card)
@@ -2020,10 +1948,9 @@ class StartupManagerGUI(ctk.CTk):
         self._archive_records = []
         self._archive_stats = {}
 
-        detail = ctk_theme.frame(self._archive_body, CARD_BG, corner_radius=10)
+        detail = ctk_theme.frame(archive_right, CARD_BG, corner_radius=10)
+        detail.pack(fill='both', expand=True)
         self._archive_detail_panel = detail
-        detail.grid(row=0, column=1, sticky='ns')
-        detail.configure(width=300)
         detail_inner = ttk.Frame(detail, style='Card.TFrame')
         detail_inner.pack(fill='both', expand=True, padx=12, pady=12)
         ttk.Label(detail_inner, text='Selected custody', font=('Segoe UI', 11, 'bold'),
@@ -2426,16 +2353,18 @@ class StartupManagerGUI(ctk.CTk):
 
         self._startup_container = ttk.Frame(self.startup_tab)
         self._startup_container.pack(fill='both', expand=True, padx=10, pady=(0, 4))
-        self._startup_container.grid_rowconfigure(0, weight=1)
-        self._startup_container.grid_columnconfigure(0, weight=1)
 
-        self._startup_tree_card = ttk.Frame(self._startup_container, style='Card.TFrame')
-        self._startup_tree_card.grid(row=0, column=0, sticky='nsew')
+        self._startup_pane, startup_left, startup_right = create_horizontal_pane(
+            self._startup_container, use_pack=True)
+        self._bind_pane(self._startup_pane, 'startup_split', default=480)
+
+        self._startup_tree_card = ttk.Frame(startup_left, style='Card.TFrame')
+        self._startup_tree_card.pack(fill='both', expand=True)
         self._startup_tree_card.grid_rowconfigure(0, weight=1)
         self._startup_tree_card.grid_columnconfigure(0, weight=1)
 
         tree_frame = ttk.Frame(self._startup_tree_card, style='Card.TFrame')
-        tree_frame.grid(row=0, column=0, sticky='nsew', padx=8, pady=8)
+        tree_frame.pack(fill='both', expand=True, padx=8, pady=8)
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
         cols = ('name', 'type', 'source', 'status')
@@ -2468,8 +2397,8 @@ class StartupManagerGUI(ctk.CTk):
         vscroll.grid(row=0, column=1, sticky='ns')
         hscroll.grid(row=1, column=0, sticky='ew')
 
-        self._startup_detail_panel = ttk.Frame(self._startup_container, style='Card.TFrame')
-        self._startup_detail_panel.grid(row=0, column=1, sticky='ns')
+        self._startup_detail_panel = ttk.Frame(startup_right, style='Card.TFrame')
+        self._startup_detail_panel.pack(fill='both', expand=True)
         detail_inner = ttk.Frame(self._startup_detail_panel, style='Card.TFrame')
         detail_inner.pack(fill='both', expand=True, padx=12, pady=12)
         ttk.Label(detail_inner, text='Details', font=('Segoe UI', 11, 'bold'),
@@ -2594,8 +2523,11 @@ class StartupManagerGUI(ctk.CTk):
         body.grid_rowconfigure(0, weight=1)
         body.grid_columnconfigure(0, weight=1)
 
-        tree_card = ctk_theme.frame(body, CARD_BG, corner_radius=10)
-        tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        self._cleanup_pane, cleanup_left, cleanup_right = create_horizontal_pane(body)
+        self._bind_pane(self._cleanup_pane, 'cleaner_split', default=520)
+
+        tree_card = ctk_theme.frame(cleanup_left, CARD_BG, corner_radius=10)
+        tree_card.pack(fill='both', expand=True)
         tree_wrap = ttk.Frame(tree_card, style='Card.TFrame')
         tree_wrap.pack(fill='both', expand=True, padx=8, pady=8)
         tree_wrap.grid_rowconfigure(0, weight=1)
@@ -2627,8 +2559,8 @@ class StartupManagerGUI(ctk.CTk):
         self.cleanup_tree.grid(row=0, column=0, sticky='nsew')
         cleanup_vscroll.grid(row=0, column=1, sticky='ns')
 
-        detail = ctk_theme.frame(body, CARD_BG, corner_radius=10)
-        detail.grid(row=0, column=1, sticky='ns')
+        detail = ctk_theme.frame(cleanup_right, CARD_BG, corner_radius=10)
+        detail.pack(fill='both', expand=True)
         detail_inner = ttk.Frame(detail, style='Card.TFrame')
         detail_inner.pack(fill='both', expand=True, padx=12, pady=12)
         ttk.Label(detail_inner, text='Candidate details', font=('Segoe UI', 11, 'bold'),
@@ -2921,34 +2853,37 @@ class StartupManagerGUI(ctk.CTk):
         restore_frame = ttk.Frame(self.restore_tab)
         restore_frame.pack(fill='both', expand=True, padx=10, pady=(6, 10))
         self._restore_frame = restore_frame
-        left = ttk.Frame(restore_frame)
-        self._restore_left = left
-        left.pack(side='left', fill='both', expand=True)
+
+        self._restore_pane, restore_left, restore_right = create_horizontal_pane(
+            restore_frame, use_pack=True)
+        self._bind_pane(self._restore_pane, 'restore_split', default=520)
+
+        restore_left.grid_rowconfigure(0, weight=1)
+        restore_left.grid_columnconfigure(0, weight=1)
+        self._restore_left = restore_left
         restore_cols = ('src', 'dest', 'time')
-        self.restore_tree = ttk.Treeview(left, columns=restore_cols, show='headings', selectmode='browse')
+        self.restore_tree = ttk.Treeview(restore_left, columns=restore_cols, show='headings', selectmode='browse')
         self.restore_tree.heading('src', text='Original Path')
         self.restore_tree.heading('dest', text='Archived Path')
         self.restore_tree.heading('time', text='Time')
         self.restore_tree.column('src', width=240, anchor='w', stretch=True, minwidth=120)
         self.restore_tree.column('dest', width=240, anchor='w', stretch=True, minwidth=120)
         self.restore_tree.column('time', width=140, anchor='center', stretch=False, minwidth=100)
-        self.restore_tree.pack(fill='both', expand=True, side='left')
         self.restore_tree.tag_configure('oddrow', background=CARD_BG)
         self.restore_tree.tag_configure('evenrow', background=ROW_ALT)
         self.restore_empty_hint = self._make_empty_hint(
             self.restore_tree, 'No restore entries.\nArchived files appear here after a cleanup.')
         self._refresh_empty_hint(self.restore_empty_hint, self.restore_tree)
-        restore_vscroll = ttk.Scrollbar(left, orient='vertical', command=self.restore_tree.yview)
-        restore_hscroll = ttk.Scrollbar(left, orient='horizontal', command=self.restore_tree.xview)
+        restore_vscroll = ttk.Scrollbar(restore_left, orient='vertical', command=self.restore_tree.yview)
+        restore_hscroll = ttk.Scrollbar(restore_left, orient='horizontal', command=self.restore_tree.xview)
         self.restore_tree.configure(yscrollcommand=restore_vscroll.set, xscrollcommand=restore_hscroll.set)
-        restore_vscroll.pack(side='right', fill='y')
-        restore_hscroll.pack(side='bottom', fill='x')
+        self.restore_tree.grid(row=0, column=0, sticky='nsew')
+        restore_vscroll.grid(row=0, column=1, sticky='ns')
+        restore_hscroll.grid(row=1, column=0, sticky='ew')
 
-        right = ttk.Frame(restore_frame, width=320, style='Card.TFrame')
+        right = ttk.Frame(restore_right, style='Card.TFrame')
         self._restore_preview_panel = right
-        right.pack(side='left', fill='y', padx=(8, 0))
-        right.pack_propagate(False)
-        self._restore_split_mode = 'wide'
+        right.pack(fill='both', expand=True)
         ttk.Label(right, text='Preview', font=('Segoe UI', 11, 'bold'), background=CARD_BG).pack(anchor='w', padx=8, pady=(8, 4))
         self.restore_detail_src = ttk.Label(right, text='Original: —', style='CardInfo.TLabel', wraplength=360, justify='left')
         self.restore_detail_dest = ttk.Label(right, text='Archived: —', style='CardInfo.TLabel', wraplength=360, justify='left')
@@ -3011,18 +2946,19 @@ class StartupManagerGUI(ctk.CTk):
         body = ttk.Frame(self.settings_tab, style='Content.TFrame')
         body.grid(row=0, column=0, sticky='nsew', padx=10, pady=(10, 4))
         body.grid_rowconfigure(0, weight=1)
-        body.grid_columnconfigure(1, weight=1)
+        body.grid_columnconfigure(0, weight=1)
 
-        nav_host = ctk_theme.frame(body, SIDEBAR_BG, corner_radius=10)
-        nav_host.grid(row=0, column=0, sticky='ns', padx=(0, 10))
-        nav_host.configure(width=188)
-        nav_host.grid_propagate(False)
+        self._settings_pane, settings_nav, settings_content = create_horizontal_pane(body)
+        self._bind_pane(self._settings_pane, 'settings_split', default=200)
+
+        nav_host = ctk_theme.frame(settings_nav, SIDEBAR_BG, corner_radius=10)
+        nav_host.pack(fill='both', expand=True)
 
         content = ctk.CTkScrollableFrame(
-            body, fg_color=BG, corner_radius=10,
+            settings_content, fg_color=BG, corner_radius=10,
             scrollbar_button_color=BORDER, scrollbar_button_hover_color=ACCENT_SOFT,
         )
-        content.grid(row=0, column=1, sticky='nsew')
+        content.pack(fill='both', expand=True)
 
         self._settings_section_frames = {}
         for name in ('General', 'Scan', 'Archive', 'Explorer', 'Receipts', 'Advanced'):
@@ -3634,8 +3570,14 @@ class StartupManagerGUI(ctk.CTk):
         self._add_tooltip(self.uninst_leftover_btn,
                           'Find leftover folders for the selected program and archive them (restorable).')
 
-        wrap = ttk.Frame(self.uninstall_tab, style='Card.TFrame')
-        wrap.pack(fill='both', expand=True, padx=10, pady=(0, 6))
+        uninst_body = ttk.Frame(self.uninstall_tab, style='Content.TFrame')
+        uninst_body.pack(fill='both', expand=True, padx=10, pady=(0, 6))
+        self._uninst_pane, uninst_left, uninst_right = create_horizontal_pane(
+            uninst_body, use_pack=True)
+        self._bind_pane(self._uninst_pane, 'uninstaller_split', default=520)
+
+        wrap = ttk.Frame(uninst_left, style='Card.TFrame')
+        wrap.pack(fill='both', expand=True)
         cols = ['sel', 'name', 'publisher', 'version', 'size', 'installed']
         if self.power_user:
             cols.append('key')
@@ -3676,11 +3618,11 @@ class StartupManagerGUI(ctk.CTk):
             self.uninstall_tree, 'No programs match this view.\nTry "All Programs" or Refresh.')
 
         detail_frame = ttk.Labelframe(
-            self.uninstall_tab,
+            uninst_right,
             text='Program summary — local guidance (no web lookup)',
             style='Detail.TLabelframe',
         )
-        detail_frame.pack(fill='x', padx=10, pady=(0, 6))
+        detail_frame.pack(fill='both', expand=True)
         detail_grid = ttk.Frame(detail_frame, style='Detail.TLabelframe')
         detail_grid.pack(fill='x', padx=10, pady=10)
         self.uninst_detail_name = ttk.Label(
@@ -7017,11 +6959,12 @@ class StartupManagerGUI(ctk.CTk):
                                  values=(r['severity'].upper(), r['title'], r['detail']),
                                  tags=(r['severity'], stripe))
         self._refresh_empty_hint(self.rec_empty_hint, self.rec_tree)
-        if hasattr(self, '_home_rec_empty'):
-            if recs:
-                self._home_rec_empty.pack_forget()
-            else:
-                self._home_rec_empty.pack(anchor='w', padx=10, pady=(0, 8))
+        if hasattr(self, '_home_rec_pane'):
+            sync_table_empty_view(
+                has_rows=bool(recs),
+                empty_panel=self._home_rec_empty_panel,
+                pane=self._home_rec_pane,
+            )
         if recs:
             self.rec_tree.selection_set('0')
             self.rec_tree.focus('0')

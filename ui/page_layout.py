@@ -105,23 +105,95 @@ class EmptyStateCard:
 def sync_table_empty_view(
     *,
     has_rows: bool,
-    table_card,
-    detail_panel,
     empty_panel,
+    table_card=None,
+    detail_panel=None,
+    pane=None,
     hide_detail_when_empty: bool = True,
 ) -> None:
     """Show table+details when rows exist; otherwise show empty card only."""
     if has_rows:
         empty_panel.grid_remove()
-        table_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
-        detail_panel.grid(row=0, column=1, sticky='ns')
+        if pane is not None:
+            try:
+                pane.grid(row=0, column=0, sticky='nsew')
+            except Exception:
+                try:
+                    pane.pack(fill='both', expand=True)
+                except Exception:
+                    pass
+        elif table_card is not None and detail_panel is not None:
+            table_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+            detail_panel.grid(row=0, column=1, sticky='nsew')
     else:
-        table_card.grid_remove()
-        if hide_detail_when_empty:
-            detail_panel.grid_remove()
-        else:
-            detail_panel.grid(row=0, column=1, sticky='ns')
+        if pane is not None:
+            try:
+                pane.grid_remove()
+            except Exception:
+                try:
+                    pane.pack_forget()
+                except Exception:
+                    pass
+        elif table_card is not None:
+            table_card.grid_remove()
+            if detail_panel is not None:
+                if hide_detail_when_empty:
+                    detail_panel.grid_remove()
+                else:
+                    detail_panel.grid(row=0, column=1, sticky='nsew')
         empty_panel.grid(row=0, column=0, columnspan=2, sticky='nsew')
+
+
+def bind_pane_persistence(
+    pane,
+    key: str,
+    *,
+    get_value,
+    set_value,
+    default: int | None = None,
+) -> None:
+    """Restore and save ttk.PanedWindow sash position under *key*."""
+    state = {'restored': False}
+
+    def _restore(_event=None):
+        if state['restored']:
+            return
+        try:
+            pane.update_idletasks()
+            pos = get_value(key, default)
+            if pos is not None:
+                total = max(pane.winfo_width(), 1)
+                pos = max(120, min(int(pos), max(total - 120, 120)))
+                pane.sashpos(0, pos)
+            state['restored'] = True
+        except Exception:
+            pass
+
+    def _save(_event=None):
+        try:
+            set_value(key, pane.sashpos(0))
+        except Exception:
+            pass
+
+    pane.bind('<Configure>', _restore, add='+')
+    pane.bind('<ButtonRelease-1>', _save, add='+')
+    pane.after(120, _restore)
+
+
+def create_horizontal_pane(parent, *, use_pack: bool = False):
+    """Return (panedwindow, left_frame, right_frame)."""
+    pane = ttk.PanedWindow(parent, orient='horizontal')
+    if use_pack:
+        pane.pack(fill='both', expand=True)
+    else:
+        parent.grid_rowconfigure(0, weight=1)
+        parent.grid_columnconfigure(0, weight=1)
+        pane.grid(row=0, column=0, sticky='nsew')
+    left = ttk.Frame(pane, style='Card.TFrame')
+    right = ttk.Frame(pane, style='Card.TFrame')
+    pane.add(left, weight=3)
+    pane.add(right, weight=1)
+    return pane, left, right
 
 
 class DataTableFrame(ttk.Frame):
