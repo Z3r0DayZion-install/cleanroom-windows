@@ -26,9 +26,12 @@ def _load_tray_image():
     from PIL import Image
 
     candidates = (
+        brand.ICON_TRAY_PNG_PATH,
         brand.ICON_PNG_PATH,
         brand.ICON_ICO_PATH,
+        _resource_path('assets/brand/cleanroom-icon-tray.png'),
         _resource_path('assets/brand/cleanroom-icon.png'),
+        _resource_path('cleanroom-icon-tray.png'),
         _resource_path('cleanroom-icon.png'),
         _resource_path('cleanroom-icon.ico'),
     )
@@ -100,10 +103,12 @@ class TrayController:
         'Open Latest Receipt',
         'Open Proof Pack',
         'Open Archive Folder',
+        'Tools',
         'Explorer Context Menus',
         'Registry Snapshot',
         'Cleanroom Rewind',
         'Custody Check',
+        'Window',
         'Hide to tray',
         'Show',
         'Restore',

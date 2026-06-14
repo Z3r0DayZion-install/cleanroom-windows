@@ -5,10 +5,13 @@
 
 Automated gates (`pytest`, `ui_merge_gates`, `verify_release_surface`, tray smoke) must be green first. This document covers what automation cannot fully prove.
 
+**Do not commit screenshots to the repo.** Capture locally for review; use this doc as the PASS/FAIL rubric.
+
 ## Launch
 
 ```powershell
 git pull
+python scripts/generate_icons.py   # only if regenerating from SVG
 python startup_manager_gui.py
 ```
 
@@ -17,6 +20,41 @@ Optional automated tray lifecycle check (does not replace visual confirmation of
 ```powershell
 python scripts/tray_visual_gate.py
 ```
+
+## Icon pipeline (premium product identity)
+
+**Source:** `assets/brand/cleanroom-icon.svg`  
+**Generate:** `python scripts/generate_icons.py` → `cleanroom-icon.png`, `cleanroom-icon-tray.png`, `cleanroom-icon.ico`  
+**Consumers:** titlebar (`iconbitmap`), tray (`ui/tray.py`), PyInstaller + Inno Setup (already wired to `assets/brand/`).
+
+Manual proof — icon must read as **archive + custody + trust**, not generic recycle/broom:
+
+- [ ] **Desktop shortcut** (if installed): sharp, not blurry; no stale old shield-with-C artwork.
+- [ ] **Taskbar:** recognizable at small size; edges crisp.
+- [ ] **Tray:** uses optimized 32×32 asset; readable in notification area overflow.
+- [ ] **Titlebar:** matches taskbar; not default Tk feather.
+- [ ] **16×16:** shield + archive mark still distinguishable (open ICO at 16px in Explorer or VS Code).
+- [ ] No obvious stale icon in exe metadata after rebuild (installer pass is separate; dev run uses assets above).
+
+## Visual screenshot set (local capture only)
+
+Capture at **1150×720 default** unless noted. Mark each PASS/FAIL.
+
+| # | Capture | PASS means |
+|---|---------|------------|
+| 1 | **Home** @ 1150×720 | Compact hero, custody chip in global header, no double-header stack |
+| 2 | **Home** maximized | Content centered or fills sanely; no crushed sidebar |
+| 3 | **Cleaner empty** | Empty card only — no dead details pane |
+| 4 | **Cleaner with candidates** | Split pane + grouped tree + details; sash visible |
+| 5 | **Archive** | Loading/empty/results intentional; actions grouped |
+| 6 | **Proof Ledger** | Compact hero; trust inline; table + details |
+| 7 | **Startup** | Compact header; split pane works |
+| 8 | **Uninstaller** | Empty/selection states clear |
+| 9 | **Settings** opened from **top-right** header (not sidebar-only path) | Same Settings page; pill nav |
+| 10 | **Tools → Explorer Context Menus** | Dark modal editor opens |
+| 11 | **Tray icon + right-click menu** | One icon; product menu hierarchy |
+| 12 | **920×580** compact layout | Usable; Settings still reachable |
+| 13 | **150% scaling** (Windows display or gate) | No clipped chrome; sidebar usable |
 
 ## Global chrome
 
@@ -39,6 +77,7 @@ python scripts/tray_visual_gate.py
 - [ ] **Tools:** Explorer Menus, Registry Snapshot, Rewind, Receipt, Proof Pack, Custody Check, Lights Out.
 - [ ] Active nav state is clearly distinct from hover.
 - [ ] Collapsed sidebar (`«`) remains usable.
+- [ ] Settings is **not** awkwardly buried as the only obvious path (header + `Ctrl+,` are primary).
 
 ## Split panes (table + details)
 
@@ -61,11 +100,12 @@ On **Cleaner, Archive, Proof Ledger, Startup, Uninstaller, Restore**:
 ## Tray (real Windows notification area)
 
 - [ ] Tray icon **visible** in the notification area after launch.
-- [ ] Right-click opens menu with: Open, Hide, Show, Run Scan, Latest Receipt, Proof Pack, Open Archive Folder, Quit (and tool entries as applicable).
-- [ ] **Hide** withdraws main window; **Show** / **Open** restores it.
+- [ ] Right-click opens menu: Open Cleanroom, Run Scan (or disabled while scanning), receipt/proof actions, Open Archive Folder, **Tools** submenu, **Window** submenu, Quit.
+- [ ] **Hide to tray** withdraws main window; **Show** / **Open** restores it.
 - [ ] **Quit** removes tray icon cleanly.
 - [ ] Relaunch creates **one** icon only (no duplicate pile).
-- [ ] No `_running` traceback on quit.
+- [ ] Second instance does not spawn duplicate tray icons.
+- [ ] No `_running` / pystray traceback on quit.
 - [ ] Menu actions (Latest Receipt, Proof Pack, etc.) do not crash.
 
 ## Dialogs
@@ -80,6 +120,7 @@ On **Cleaner, Archive, Proof Ledger, Startup, Uninstaller, Restore**:
   - Schedule cleanup
   - Proof report
 - [ ] OS file/folder pickers may remain native (acceptable).
+- [ ] pystray menu may stay OS-native (acceptable).
 
 ## PR #21 regression
 
@@ -89,11 +130,13 @@ On **Cleaner, Archive, Proof Ledger, Startup, Uninstaller, Restore**:
 
 - [ ] No **Not Responding** during normal navigation.
 - [ ] No **TclError** in console during sign-off pass.
+- [ ] No **CTkImage** warning spam on launch.
 
 ## Sign-off
 
 | Role | Name | Date | Result |
 |------|------|------|--------|
+| Icon visual | | | PASS / FAIL |
 | Manual visual | | | PASS / FAIL |
 | Tray visual | | | PASS / FAIL |
 

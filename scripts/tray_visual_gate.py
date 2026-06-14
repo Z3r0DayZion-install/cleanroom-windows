@@ -19,6 +19,7 @@ import startup_manager_gui as gui
 CHECKS: dict[str, bool | None] = {
     'tray_icon': None,
     'tray_menu': None,
+    'menu_hierarchy': None,
     'open': None,
     'hide': None,
     'show': None,
@@ -27,6 +28,20 @@ CHECKS: dict[str, bool | None] = {
     'quit': None,
     'singleton': None,
 }
+
+_EXPECTED_MENU = (
+    'Open Cleanroom',
+    'Run Scan',
+    'Preview Latest Receipt',
+    'Open Latest Receipt',
+    'Open Proof Pack',
+    'Open Archive Folder',
+    'Tools',
+    'Window',
+    'Hide to tray',
+    'Show',
+    'Quit Cleanroom',
+)
 
 
 def _fail(msg: str) -> None:
@@ -73,6 +88,12 @@ def run_gate(app: gui.StartupManagerGUI) -> None:
         _fail(f'tray menu build failed: {exc}')
     if not CHECKS['tray_menu']:
         _fail('tray menu missing')
+
+    from ui.tray import TrayController
+    missing = [label for label in _EXPECTED_MENU if label not in TrayController.MENU_LABELS]
+    CHECKS['menu_hierarchy'] = not missing
+    if missing:
+        _fail(f'tray menu missing labels: {missing}')
 
     app._tray_show_window()
     app.update_idletasks()

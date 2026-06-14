@@ -25,7 +25,9 @@ BRAND_DIR = _ROOT / 'assets' / 'brand'
 LOGO_ORIGINAL_PATH = BRAND_DIR / 'cleanroom-logo-original.png'
 LOGO_PATH = BRAND_DIR / 'cleanroom-logo.png'
 ICON_PNG_PATH = BRAND_DIR / 'cleanroom-icon.png'
+ICON_TRAY_PNG_PATH = BRAND_DIR / 'cleanroom-icon-tray.png'
 ICON_ICO_PATH = BRAND_DIR / 'cleanroom-icon.ico'
+ICON_SVG_PATH = BRAND_DIR / 'cleanroom-icon.svg'
 
 _migrated = False
 
