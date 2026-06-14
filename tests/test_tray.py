@@ -74,6 +74,25 @@ def test_tray_preview_enabled_when_candidates_checked():
     assert tray._can_preview_receipt() is False
 
 
+def test_tray_stop_without_running_attr():
+    app = _FakeApp()
+    tray = TrayController(app)
+
+    class _Icon:
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    icon = _Icon()
+    tray._icon = icon
+    tray.stop()
+    assert icon.stopped is True
+    assert tray._icon is None
+    assert getattr(icon, '_running', False) is False
+
+
 def test_tray_start_without_pystray_is_safe(monkeypatch):
     import sys
     monkeypatch.delitem(sys.modules, 'pystray', raising=False)

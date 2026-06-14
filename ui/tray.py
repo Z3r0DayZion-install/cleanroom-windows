@@ -32,6 +32,36 @@ def _load_tray_image():
     return Image.new('RGBA', (64, 64), (59, 130, 246, 255))
 
 
+def _ensure_icon_running_attr(icon) -> None:
+    """pystray Icon.__del__ reads _running; set it before stop/GC to avoid tracebacks."""
+    if icon is not None and not hasattr(icon, '_running'):
+        icon._running = False
+
+
+def _patch_pystray_icon_del() -> None:
+    """Guard pystray shutdown when Icon is GC'd before run() initializes _running."""
+    try:
+        from pystray import _win32
+    except Exception:
+        return
+    if getattr(_win32.Icon, '_cleanroom_del_patched', False):
+        return
+    _orig_del = _win32.Icon.__del__
+
+    def _safe_del(self):
+        _ensure_icon_running_attr(self)
+        try:
+            _orig_del(self)
+        except Exception:
+            pass
+
+    _win32.Icon.__del__ = _safe_del
+    _win32.Icon._cleanroom_del_patched = True
+
+
+_patch_pystray_icon_del()
+
+
 class TrayController:
     """System tray with product menu hierarchy and live proof-status tooltip."""
 
@@ -57,6 +87,7 @@ class TrayController:
         self._app = app
         self._icon = None
         self._thread = None
+        self._stopping = False
 
     def start(self):
         try:
@@ -65,19 +96,31 @@ class TrayController:
             return False
         if self._thread and self._thread.is_alive():
             return True
+        self._stopping = False
         self._thread = threading.Thread(target=self._run, name='cleanroom-tray', daemon=True)
         self._thread.start()
         return True
 
     def stop(self):
+        self._stopping = True
         icon = self._icon
         self._icon = None
         if icon is None:
             return
+        _ensure_icon_running_attr(icon)
         try:
             icon.stop()
         except Exception:
             pass
+        finally:
+            try:
+                icon._running = False
+            except Exception:
+                pass
+        thread = self._thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        self._thread = None
 
     def refresh_tooltip(self):
         icon = self._icon
@@ -158,19 +201,32 @@ class TrayController:
         )
 
     def _run(self):
+        icon = None
         try:
             import pystray
 
             image = _load_tray_image()
-            self._icon = pystray.Icon(
+            icon = pystray.Icon(
                 'Cleanroom',
                 image,
                 self._tooltip_text(),
                 menu=self._build_menu,
             )
-            self._icon.run()
+            _ensure_icon_running_attr(icon)
+            if self._stopping:
+                return
+            self._icon = icon
+            icon.run()
         except Exception:
-            self._icon = None
+            pass
+        finally:
+            if self._icon is icon:
+                self._icon = None
+            if icon is not None:
+                try:
+                    icon._running = False
+                except Exception:
+                    pass
 
     def _schedule(self, fn):
         try:

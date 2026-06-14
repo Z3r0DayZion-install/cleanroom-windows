@@ -38,38 +38,37 @@ def proof_card(
     return card, value
 
 
-def trust_card(
+def trust_compact_strip(
     parent,
     *,
-    card_bg: str,
-    accent_soft: str,
-    accent: str,
+    bg: str,
+    proof_soft: str,
+    proof: str,
     text_color: str,
+    muted: str,
     head_bg: str,
     on_why,
 ) -> tuple[ctk.CTkFrame, ctk.CTkLabel, ctk.CTkLabel, ctk.CTkButton]:
-    """Custody trust hero card; returns (frame, value_label, caption_label, why_button)."""
-    card = ctk_theme.frame(
-        parent, accent_soft, corner_radius=10,
-    )
-    inner = ctk_theme.frame(card, accent_soft, corner_radius=10)
-    inner.pack(fill='both', expand=True, padx=14, pady=10)
+    """Compact custody trust pill — not a full-width hero banner."""
+    strip = ctk_theme.frame(parent, bg)
+    pill = ctk_theme.frame(strip, proof_soft, corner_radius=16)
+    pill.pack(fill='x')
+    inner = ctk_theme.frame(pill, proof_soft, corner_radius=16)
+    inner.pack(fill='x', padx=10, pady=5)
     ctk_theme.label(
-        inner, 'Custody Trust', text_color=accent, font_size=9, weight='bold',
-    ).pack(anchor='w')
-    row = ctk_theme.frame(inner, accent_soft)
-    row.pack(anchor='w', pady=(4, 0))
-    value = ctk_theme.label(row, '—', text_color=accent, font_size=22, weight='bold', width=48)
-    value.pack(side='left')
-    caption = ctk_theme.label(row, '% verified', text_color=text_color, font_size=10)
-    caption.pack(side='left', padx=(6, 0), pady=(6, 0))
+        inner, 'Custody trust', text_color=muted, font_size=9, weight='bold',
+    ).pack(side='left')
+    value = ctk_theme.label(inner, '—', text_color=proof, font_size=13, weight='bold')
+    value.pack(side='left', padx=(8, 0))
+    caption = ctk_theme.label(inner, '', text_color=text_color, font_size=9)
+    caption.pack(side='left', padx=(6, 0))
     why = ctk_theme.button(
         inner, 'Why?', on_why,
-        fg_color=head_bg, hover_color=accent_soft, text_color=text_color,
-        width=52, height=22,
+        fg_color=head_bg, hover_color=bg, text_color=text_color,
+        width=44, height=22,
     )
-    why.pack(anchor='w', pady=(6, 0))
-    return card, value, caption, why
+    why.pack(side='right')
+    return strip, value, caption, why
 
 
 class CommandBar:
@@ -91,6 +90,8 @@ class CommandBar:
         on_preview,
         on_apply,
         on_restore,
+        proof: str = '',
+        proof_dark: str = '',
         more_groups: list[tuple[str, list[tuple[str, callable]]]] | None = None,
         more_items: list[tuple[str, callable]] | None = None,
     ):
@@ -100,6 +101,8 @@ class CommandBar:
         self._accent = accent
         self._accent_dark = accent_dark
         self._accent_soft = accent_soft
+        self._proof = proof or accent
+        self._proof_dark = proof_dark or accent_dark
         self._on_accent = on_accent
         self._text = text
         self._muted = accent_soft  # placeholder; overridden below if needed
@@ -123,7 +126,7 @@ class CommandBar:
         self.tb_preview.pack(side='left', padx=(0, 6))
         self.tb_apply = ctk_theme.button(
             self._primary, 'Archive & Clean', on_apply,
-            fg_color=accent, hover_color=accent_dark, text_color=on_accent, primary=True,
+            fg_color=self._proof, hover_color=self._proof_dark, text_color=on_accent, primary=True,
             height=34,
         )
         self.tb_apply.pack(side='left', padx=(0, 6))
@@ -180,23 +183,14 @@ class CommandBar:
             btn.configure(fg_color=self._head_bg, hover_color=self._accent_soft)
         self.tb_apply.configure(fg_color=self._head_bg, hover_color=self._accent_soft)
         if tab_idx in (0, 3):
-            self.tb_apply.configure(fg_color=self._accent, hover_color=self._accent_dark)
+            self.tb_apply.configure(fg_color=self._proof, hover_color=self._proof_dark)
         elif tab_idx in (5, 6):
-            self.tb_restore.configure(fg_color=self._accent, hover_color=self._accent_dark)
+            self.tb_restore.configure(fg_color=self._proof, hover_color=self._proof_dark)
 
     def set_page_mode(self, *, dashboard: bool, tab_idx: int = 0) -> None:
-        """Home: compact secondary strip. Workspace: hide global bar (page CTAs own the job)."""
+        """Global bar hidden — page heroes and sidebar own primary actions."""
         self._dashboard_mode = dashboard
-        if dashboard:
-            self._shell.pack(fill='x', pady=(4, 0))
-            self._shell.configure(fg_color=self._bg)
-            for btn in (self.tb_scan, self.tb_preview, self.tb_apply, self.tb_restore, self._more_btn):
-                btn.configure(fg_color=self._head_bg, hover_color=self._accent_soft, height=30)
-            self._proof_flow_lbl.pack_forget()
-        else:
-            self._shell.pack_forget()
-            return
-        self.set_context(tab_idx)
+        self._shell.pack_forget()
 
     def set_compact_labels(self, compact: bool) -> None:
         self.tb_preview.configure(text='Preview' if compact else 'Preview Receipt')
@@ -458,15 +452,17 @@ def collapsible_section(
     muted: str,
     text_color: str,
     accent_soft: str = '',
+    hover_bg: str = '',
     start_open: bool = True,
 ) -> tuple[ctk.CTkButton, ctk.CTkFrame]:
     """Collapsible sidebar group; returns (toggle_button, body_frame)."""
     accent_soft = accent_soft or sidebar_bg
+    hover_bg = hover_bg or sidebar_bg
     block = ctk_theme.frame(parent, sidebar_bg)
     block.pack(fill='x', padx=4, pady=(0, 12))
     state = {'open': start_open}
 
-    header = ctk_theme.frame(block, accent_soft if start_open else sidebar_bg, corner_radius=8)
+    header = ctk_theme.frame(block, sidebar_bg, corner_radius=8)
     header.pack(fill='x', padx=2, pady=(0, 4))
     body = ctk_theme.frame(block, sidebar_bg)
     if start_open:
@@ -478,7 +474,7 @@ def collapsible_section(
         f'{chevron}  {title}',
         lambda: None,
         fg_color='transparent',
-        hover_color=accent_soft,
+        hover_color=hover_bg,
         text_color=muted,
         anchor='w',
         height=32,
@@ -490,11 +486,9 @@ def collapsible_section(
         state['open'] = not state['open']
         if state['open']:
             body.pack(fill='x', padx=6, pady=(0, 4))
-            header.configure(fg_color=accent_soft)
             toggle.configure(text=f'▾  {title}')
         else:
             body.pack_forget()
-            header.configure(fg_color=sidebar_bg)
             toggle.configure(text=f'▸  {title}')
 
     toggle.configure(command=_flip)
@@ -509,10 +503,13 @@ def sidebar_nav_button(
     sidebar_bg: str,
     accent_soft: str,
     text_color: str,
+    hover_color: str = '',
 ) -> ctk.CTkButton:
     """Full-width sidebar navigation row."""
     return ctk_theme.button(
         parent, label, command,
-        fg_color='transparent', hover_color=accent_soft, text_color=text_color,
+        fg_color='transparent',
+        hover_color=hover_color or sidebar_bg,
+        text_color=text_color,
         anchor='w', height=38, corner_radius=8,
     )

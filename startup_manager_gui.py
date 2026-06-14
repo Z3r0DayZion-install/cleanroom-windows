@@ -20,12 +20,11 @@ from ui.proof_dashboard import (
     ProofDrawer,
     brand_identity_block,
     collapsible_section,
-    proof_card,
     recent_proof_tile,
     settings_card,
     settings_sidebar_nav,
     sidebar_nav_button,
-    trust_card,
+    trust_compact_strip,
 )
 from ui.product_dialogs import (
     CleanroomModal,
@@ -174,6 +173,7 @@ PALETTES = {
         'LABEL': 'Dark',
         'BG': '#1E232B', 'SIDEBAR_BG': '#171C23', 'CARD_BG': '#262C36',
         'ACCENT': '#3B82F6', 'ACCENT_DARK': '#2563EB', 'ACCENT_SOFT': '#1E3A5F',
+        'PROOF': '#22C55E', 'PROOF_DARK': '#16A34A', 'PROOF_SOFT': '#143D26',
         'ON_ACCENT': '#FFFFFF',
         'TEXT': '#E5E7EB', 'MUTED': '#9AA4B2', 'BORDER': '#39414E',
         'ROW_ALT': '#2B323D', 'HEAD_BG': '#323A46', 'STATUS_BG': '#171C23',
@@ -189,6 +189,7 @@ PALETTES = {
         'LABEL': 'Light',
         'BG': '#EEF2F9', 'SIDEBAR_BG': '#F7FAFF', 'CARD_BG': '#FFFFFF',
         'ACCENT': '#2563EB', 'ACCENT_DARK': '#1D4ED8', 'ACCENT_SOFT': '#E8F0FE',
+        'PROOF': '#16A34A', 'PROOF_DARK': '#15803D', 'PROOF_SOFT': '#DCFCE7',
         'ON_ACCENT': '#FFFFFF',
         'TEXT': '#1F2937', 'MUTED': '#6B7280', 'BORDER': '#D9E2EC',
         'ROW_ALT': '#F4F8FE', 'HEAD_BG': '#E4E9F3', 'STATUS_BG': '#E4E9F3',
@@ -204,6 +205,7 @@ PALETTES = {
         'LABEL': 'Midnight (OLED)',
         'BG': '#000000', 'SIDEBAR_BG': '#050709', 'CARD_BG': '#0D1117',
         'ACCENT': '#00E5FF', 'ACCENT_DARK': '#00B8D4', 'ACCENT_SOFT': '#003A44',
+        'PROOF': '#34D399', 'PROOF_DARK': '#10B981', 'PROOF_SOFT': '#064E3B',
         'ON_ACCENT': '#00222A',
         'TEXT': '#D7E0E8', 'MUTED': '#7A8794', 'BORDER': '#1F2933',
         'ROW_ALT': '#11161C', 'HEAD_BG': '#161D24', 'STATUS_BG': '#050709',
@@ -219,6 +221,7 @@ PALETTES = {
         'LABEL': 'Nord',
         'BG': '#2E3440', 'SIDEBAR_BG': '#272C36', 'CARD_BG': '#3B4252',
         'ACCENT': '#88C0D0', 'ACCENT_DARK': '#81A1C1', 'ACCENT_SOFT': '#434C5E',
+        'PROOF': '#A3BE8C', 'PROOF_DARK': '#8FBCBB', 'PROOF_SOFT': '#3B4252',
         'ON_ACCENT': '#2E3440',
         'TEXT': '#ECEFF4', 'MUTED': '#A0AABE', 'BORDER': '#4C566A',
         'ROW_ALT': '#404859', 'HEAD_BG': '#434C5E', 'STATUS_BG': '#272C36',
@@ -234,6 +237,7 @@ PALETTES = {
         'LABEL': 'Emerald (Pro)',
         'BG': '#1F2428', 'SIDEBAR_BG': '#181C20', 'CARD_BG': '#272D33',
         'ACCENT': '#22C55E', 'ACCENT_DARK': '#16A34A', 'ACCENT_SOFT': '#143D26',
+        'PROOF': '#22C55E', 'PROOF_DARK': '#16A34A', 'PROOF_SOFT': '#143D26',
         'ON_ACCENT': '#06270F',
         'TEXT': '#E7ECEF', 'MUTED': '#94A1AB', 'BORDER': '#3A434B',
         'ROW_ALT': '#2C333A', 'HEAD_BG': '#333B43', 'STATUS_BG': '#181C20',
@@ -249,6 +253,7 @@ PALETTES = {
         'LABEL': 'Cyberpunk',
         'BG': '#170B22', 'SIDEBAR_BG': '#110718', 'CARD_BG': '#221033',
         'ACCENT': '#FF2ED1', 'ACCENT_DARK': '#D612AC', 'ACCENT_SOFT': '#3A1052',
+        'PROOF': '#39FF14', 'PROOF_DARK': '#22C55E', 'PROOF_SOFT': '#1A3D1A',
         'ON_ACCENT': '#2A0030',
         'TEXT': '#F2E9FF', 'MUTED': '#A88FC9', 'BORDER': '#43245F',
         'ROW_ALT': '#2A1540', 'HEAD_BG': '#321A4A', 'STATUS_BG': '#110718',
@@ -264,6 +269,7 @@ PALETTES = {
 
 THEME_ORDER = ['dark', 'light', 'emerald', 'midnight', 'nord', 'cyberpunk']
 THEME_KEYS = ('BG', 'SIDEBAR_BG', 'CARD_BG', 'ACCENT', 'ACCENT_DARK', 'ACCENT_SOFT',
+              'PROOF', 'PROOF_DARK', 'PROOF_SOFT',
               'ON_ACCENT', 'TEXT', 'MUTED', 'BORDER', 'ROW_ALT', 'HEAD_BG', 'STATUS_BG',
               'RING_BG', 'PREVIEW_BG', 'PLACEHOLDER', 'TOOLTIP_BG', 'TOOLTIP_FG')
 
@@ -289,6 +295,7 @@ def save_ui_prefs(prefs):
 
 # Module-level color names; set by apply_palette() before widgets are built.
 BG = SIDEBAR_BG = CARD_BG = ACCENT = ACCENT_DARK = ACCENT_SOFT = ON_ACCENT = ''
+PROOF = PROOF_DARK = PROOF_SOFT = ''
 TEXT = MUTED = BORDER = ROW_ALT = HEAD_BG = STATUS_BG = ''
 RING_BG = PREVIEW_BG = PLACEHOLDER = TOOLTIP_BG = TOOLTIP_FG = ''
 SEVERITY_COLORS = {}
@@ -524,8 +531,10 @@ class StartupManagerGUI(ctk.CTk):
             self._tray = None
 
     def _on_window_close(self):
-        if getattr(self, '_tray', None):
-            self._tray.stop()
+        tray = getattr(self, '_tray', None)
+        if tray:
+            tray.stop()
+            self._tray = None
         self.destroy()
 
     def _tray_show_window(self):
@@ -540,8 +549,10 @@ class StartupManagerGUI(ctk.CTk):
         self.withdraw()
 
     def _tray_quit(self):
-        if getattr(self, '_tray', None):
-            self._tray.stop()
+        tray = getattr(self, '_tray', None)
+        if tray:
+            tray.stop()
+            self._tray = None
         try:
             self.quit()
         except Exception:
@@ -606,52 +617,7 @@ class StartupManagerGUI(ctk.CTk):
         if hasattr(self, '_brand_status_lbl'):
             self._brand_status_lbl.configure(wraplength=max(140, min(168, w - 60)))
         if hasattr(self, '_proof_flow_lbl'):
-            if w < 900 or h < 640:
-                self._proof_flow_lbl.pack_forget()
-            else:
-                self._proof_flow_lbl.pack(side='right', padx=(8, 0))
-        if hasattr(self, '_hdr_summary') and hasattr(self, '_hdr_hero'):
-            if not getattr(self, '_page_is_dashboard', True):
-                pass
-            elif h < 620:
-                self._hdr_badges.grid_remove()
-                self._hdr_hero.grid(row=0, column=0, columnspan=5, sticky='ew')
-            else:
-                self._hdr_summary.pack(fill='x', pady=(10, 0))
-                try:
-                    scale = float(self.tk.call('tk', 'scaling'))
-                except Exception:
-                    scale = 1.0
-                compact_metrics = h < 640 or scale >= 1.45
-                tight = h < 660 or scale >= 1.45
-                if tight:
-                    self._hdr_badges.grid_remove()
-                    self._hdr_hero.grid(row=0, column=0, columnspan=5, sticky='ew')
-                elif compact_metrics:
-                    self._hdr_badges.grid_remove()
-                    self._hdr_hero.grid(row=0, column=0, columnspan=5, sticky='ew')
-                elif w < 980:
-                    self._hdr_badges.grid(row=0, column=0, columnspan=5, sticky='ew')
-                    self._hdr_hero.grid(row=1, column=0, columnspan=5, sticky='ew', pady=(8, 0))
-                else:
-                    self._hdr_badges.grid(row=0, column=0, columnspan=4, sticky='ew')
-                    if h < 740:
-                        self._hdr_hero.grid(row=1, column=0, columnspan=5, sticky='ew', pady=(8, 0))
-                    else:
-                        self._hdr_hero.grid(row=0, column=4, sticky='e', padx=(8, 0), pady=0)
-        if hasattr(self, '_archive_banner'):
-            show_banner = getattr(self, '_page_is_dashboard', True) and h >= 620
-            try:
-                if self.tab_control.index('current') in (0, 3):
-                    show_banner = show_banner and True
-                else:
-                    show_banner = False
-            except Exception:
-                pass
-            if show_banner:
-                self._archive_banner.pack(fill='x', pady=(8, 0))
-            else:
-                self._archive_banner.pack_forget()
+            self._proof_flow_lbl.pack_forget()
         if hasattr(self, '_home_recent'):
             if h < 660:
                 self._home_recent.grid_remove()
@@ -916,9 +882,9 @@ class StartupManagerGUI(ctk.CTk):
               background=[('active', ACCENT_SOFT), ('disabled', BG)],
               foreground=[('disabled', MUTED)])
         s.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'), padding=(12, 6),
-                    background=ACCENT, foreground=ON_ACCENT, bordercolor=ACCENT_DARK)
+                    background=PROOF, foreground=ON_ACCENT, bordercolor=PROOF_DARK)
         s.map('Primary.TButton',
-              background=[('active', ACCENT_DARK), ('disabled', ACCENT_SOFT)],
+              background=[('active', PROOF_DARK), ('disabled', PROOF_SOFT)],
               foreground=[('disabled', MUTED)])
         s.configure('Header.TLabel', font=('Segoe UI', 15, 'bold'), background=BG)
         s.configure('SubHeader.TLabel', font=('Segoe UI', 10), background=BG, foreground=MUTED)
@@ -1085,6 +1051,8 @@ class StartupManagerGUI(ctk.CTk):
             accent=ACCENT,
             accent_dark=ACCENT_DARK,
             accent_soft=ACCENT_SOFT,
+            proof=PROOF,
+            proof_dark=PROOF_DARK,
             text=TEXT,
             on_accent=ON_ACCENT,
             on_scan=self.refresh_cleanup,
@@ -1121,71 +1089,31 @@ class StartupManagerGUI(ctk.CTk):
         self.tb_restore = self._command_bar.tb_restore
         self._proof_flow_lbl = self._command_bar._proof_flow_lbl
 
-        banner = ctk_theme.frame(top, ACCENT_SOFT, corner_radius=10)
-        banner.pack(fill='x', pady=(8, 0))
-        self._archive_banner = banner
-        ctk_theme.label(
-            banner, ctk_theme.ARCHIVE_BANNER_TEXT,
-            text_color=ACCENT, font_size=10, weight='bold',
-        ).pack(anchor='w', padx=14, pady=8)
-
         self._hdr_summary = ctk_theme.frame(top, BG)
-        self._hdr_summary.pack(fill='x', pady=(10, 0))
-        for col in range(5):
-            self._hdr_summary.grid_columnconfigure(col, weight=1, uniform='proof')
+        self._hdr_badges = None
+        self._hdr_hero = None
 
-        self._hdr_badges = ctk_theme.frame(self._hdr_summary, BG)
-        self._hdr_badges.grid(row=0, column=0, columnspan=4, sticky='ew')
-        for col in range(4):
-            self._hdr_badges.grid_columnconfigure(col, weight=1, uniform='metric')
-
-        card_kw = dict(card_bg=CARD_BG, text_color=TEXT, muted=MUTED, accent=ACCENT)
-        measured_card, self.hdr_measured_lbl = proof_card(
-            self._hdr_badges, title='Measured', icon='📁', **card_kw)
-        measured_card.grid(row=0, column=0, sticky='ew', padx=(0, 8))
-        archived_card, self.hdr_archived_lbl = proof_card(
-            self._hdr_badges, title='Archived', icon='🗂', **card_kw)
-        archived_card.grid(row=0, column=1, sticky='ew', padx=(0, 8))
-        reclaim_card, self.hdr_reclaim_lbl = proof_card(
-            self._hdr_badges, title='Reclaimable', icon='🧹', **card_kw)
-        reclaim_card.grid(row=0, column=2, sticky='ew', padx=(0, 8))
-        receipt_card, self.hdr_receipt_lbl = proof_card(
-            self._hdr_badges, title='Last Receipt', icon='🧾', **card_kw)
-        receipt_card.grid(row=0, column=3, sticky='ew')
-
-        self._hdr_hero, self.hdr_trust_value, self.hdr_trust_lbl, self.hdr_trust_why = trust_card(
-            self._hdr_summary,
-            card_bg=ACCENT_SOFT,
-            accent_soft=ACCENT_SOFT,
-            accent=ACCENT,
+        self._hdr_compact, self.hdr_trust_value, self.hdr_trust_lbl, self.hdr_trust_why = trust_compact_strip(
+            top,
+            bg=BG,
+            proof_soft=PROOF_SOFT,
+            proof=PROOF,
             text_color=TEXT,
+            muted=MUTED,
             head_bg=HEAD_BG,
             on_why=self._show_custody_trust_why,
         )
-        self._hdr_hero.grid(row=0, column=4, sticky='e', padx=(8, 0))
+        self._hdr_compact.pack(fill='x', pady=(4, 0))
 
-        self._hdr_compact = ctk_theme.frame(top, CARD_BG, corner_radius=8)
-        self._hdr_compact_inner = ctk_theme.frame(self._hdr_compact, CARD_BG)
-        self._hdr_compact_inner.pack(fill='x', padx=12, pady=6)
-        self._hdr_compact_trust = ctk_theme.label(
-            self._hdr_compact_inner, 'Custody trust —', text_color=TEXT, font_size=10, weight='bold')
-        self._hdr_compact_trust.pack(side='left')
-        self._hdr_compact_detail = ctk_theme.label(
-            self._hdr_compact_inner, '', text_color=MUTED, font_size=10)
-        self._hdr_compact_detail.pack(side='left', padx=(10, 0))
-        self._hdr_compact.pack_forget()
+        self._archive_banner = ctk_theme.frame(top, PROOF_SOFT, corner_radius=8)
+        ctk_theme.label(
+            self._archive_banner, ctk_theme.ARCHIVE_BANNER_TEXT,
+            text_color=PROOF, font_size=9, weight='bold',
+        ).pack(anchor='w', padx=12, pady=6)
+        self._archive_banner.pack_forget()
 
-        self._add_tooltip(measured_card,
-                          'Measured = logged actions in your history.\n'
-                          'Bytes moved = lifetime logged archive movement.')
-        self._add_tooltip(archived_card,
-                          'Archived = artifacts verified on disk and restorable now.')
-        self._add_tooltip(reclaim_card,
-                          'Reclaimable = current scan candidates (checked items ready to archive).')
         self._add_tooltip(self.hdr_trust_value,
                           'Custody trust — % of archived artifacts verified on disk right now.')
-        self._add_tooltip(receipt_card,
-                          'Your most recent Cleanroom Receipt after a cleanup.')
         nxt = THEME_ORDER[(THEME_ORDER.index(CURRENT_THEME) + 1) % len(THEME_ORDER)]
         self._add_tooltip(self.tb_scan, 'Scan configured folders for cleanup candidates. (F5 refreshes everything)')
         self._add_tooltip(self.tb_preview, 'Preview what the Cleanroom Receipt will say before you archive anything.')
@@ -1194,6 +1122,23 @@ class StartupManagerGUI(ctk.CTk):
         self._add_tooltip(self._command_bar._more_btn,
                           f'More tools — theme ({PALETTES[CURRENT_THEME]["LABEL"]} → '
                           f'{PALETTES[nxt]["LABEL"]}), receipts, proof pack, schedule.')
+
+    def _show_more_menu(self):
+        if hasattr(self, '_command_bar'):
+            self._command_bar._show_more()
+
+    def _update_cleanup_empty_state(self):
+        if not hasattr(self, '_cleanup_empty_panel'):
+            return
+        empty = not self.cleanup_items
+        if empty:
+            self._cleanup_tree_card.grid_remove()
+            self._cleanup_detail_panel.grid_remove()
+            self._cleanup_empty_panel.grid(row=0, column=0, columnspan=2, sticky='nsew')
+        else:
+            self._cleanup_empty_panel.grid_remove()
+            self._cleanup_tree_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+            self._cleanup_detail_panel.grid(row=0, column=1, sticky='ns')
 
     def _build_context_bar(self, parent=None):
         """Workspace module header — title, purpose, and next action."""
@@ -1496,10 +1441,13 @@ class StartupManagerGUI(ctk.CTk):
         sidebar.grid_rowconfigure(1, weight=1)
         self._sidebar_nav_scroll = nav_scroll
         self._nav_buttons = []
-        nav_kw = dict(sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT, text_color=TEXT)
+        nav_kw = dict(
+            sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT, text_color=TEXT, hover_color=HEAD_BG,
+        )
+        section_kw = dict(sidebar_bg=SIDEBAR_BG, muted=MUTED, text_color=TEXT, hover_bg=HEAD_BG)
 
         _, main_body = collapsible_section(
-            nav_scroll, 'Main', muted=MUTED, start_open=True, **nav_kw,
+            nav_scroll, 'Main', start_open=True, **section_kw,
         )
         for idx, label, tip in (
             (0, 'Home', 'Proof home — custody status and next archive-first action.'),
@@ -1514,7 +1462,7 @@ class StartupManagerGUI(ctk.CTk):
             self._add_tooltip(btn, tip)
 
         _, sys_body = collapsible_section(
-            nav_scroll, 'System', muted=MUTED, start_open=True, **nav_kw,
+            nav_scroll, 'System', start_open=True, **section_kw,
         )
         for idx, label, tip in (
             (2, 'Startup', 'Startup programs — filter by source, enable or disable.'),
@@ -1529,7 +1477,7 @@ class StartupManagerGUI(ctk.CTk):
             self._add_tooltip(btn, tip)
 
         tools_toggle, tools_body = collapsible_section(
-            nav_scroll, 'Tools', muted=MUTED, start_open=False, **nav_kw,
+            nav_scroll, 'Tools', start_open=False, **section_kw,
         )
         self._sidebar_tools_toggle = tools_toggle
         self._sidebar_tools_body = tools_body
@@ -1583,9 +1531,11 @@ class StartupManagerGUI(ctk.CTk):
         for i, btn in self._nav_buttons:
             if i == current:
                 btn.configure(fg_color=ACCENT_SOFT, text_color=ACCENT,
+                              hover_color=ACCENT_SOFT,
                               font=ctk_theme.font(11, 'bold'))
             else:
                 btn.configure(fg_color='transparent', text_color=TEXT,
+                              hover_color=HEAD_BG,
                               font=ctk_theme.font(11, 'normal'))
         prefs = load_ui_prefs()
         prefs['last_tab'] = current
@@ -1604,20 +1554,12 @@ class StartupManagerGUI(ctk.CTk):
         dashboard = tab_idx == 0
         self._page_is_dashboard = dashboard
         try:
-            if dashboard:
-                if hasattr(self, '_hdr_summary'):
-                    self._hdr_summary.pack(fill='x', pady=(10, 0))
-                if hasattr(self, '_hdr_compact'):
-                    self._hdr_compact.pack_forget()
-                if hasattr(self, '_archive_banner'):
-                    self._archive_banner.pack(fill='x', pady=(8, 0))
-            else:
-                if hasattr(self, '_hdr_summary'):
-                    self._hdr_summary.pack_forget()
-                if hasattr(self, '_hdr_compact'):
-                    self._hdr_compact.pack(fill='x', pady=(6, 0))
-                if hasattr(self, '_archive_banner'):
-                    self._archive_banner.pack_forget()
+            if hasattr(self, '_hdr_summary'):
+                self._hdr_summary.pack_forget()
+            if hasattr(self, '_hdr_compact'):
+                self._hdr_compact.pack(fill='x', pady=(4, 0))
+            if hasattr(self, '_archive_banner'):
+                self._archive_banner.pack_forget()
             if hasattr(self, '_context_bar'):
                 if dashboard:
                     self._context_bar.pack_forget()
@@ -1640,12 +1582,12 @@ class StartupManagerGUI(ctk.CTk):
         hero_inner = ttk.Frame(hero, style='Card.TFrame')
         hero_inner.pack(fill='x', padx=16, pady=14)
         self.dashboard_status_lbl = tk.Label(
-            hero_inner, text='Ready to scan', bg=CARD_BG, fg=ACCENT,
+            hero_inner, text='Ready to scan', bg=CARD_BG, fg=PROOF,
             font=('Segoe UI', 22, 'bold'))
         self.dashboard_status_lbl.pack(anchor='w', pady=(0, 2))
         self.dashboard_msg_lbl = ttk.Label(
             hero_inner,
-            text='Scan configured folders to find cleanup candidates.',
+            text='Archive-first cleanup with receipts.',
             style='Info.TLabel', wraplength=760,
         )
         self.dashboard_msg_lbl.pack(anchor='w', pady=(0, 10))
@@ -1658,6 +1600,9 @@ class StartupManagerGUI(ctk.CTk):
             cta_row, text='Open Activity', style='Action.TButton',
             command=lambda: self._navigate_to_tab(1))
         self.dashboard_secondary_btn.pack(side='left', padx=(10, 0))
+        self.dashboard_more_btn = ttk.Button(
+            cta_row, text='More ▾', style='Action.TButton', command=self._show_more_menu)
+        self.dashboard_more_btn.pack(side='left', padx=(10, 0))
         self._add_tooltip(self.dashboard_primary_btn, 'Scan configured folders for cleanup candidates.')
         self.preview_receipt_btn = self.dashboard_primary_btn
 
@@ -1698,7 +1643,7 @@ class StartupManagerGUI(ctk.CTk):
         recent_row.pack(fill='x')
         for col in range(3):
             recent_row.grid_columnconfigure(col, weight=1)
-        tile_kw = dict(card_bg=CARD_BG, text_color=TEXT, muted=MUTED, accent=ACCENT)
+        tile_kw = dict(card_bg=CARD_BG, text_color=TEXT, muted=MUTED, accent=PROOF)
         rc, self.recent_receipt_lbl = recent_proof_tile(
             recent_row, title='Latest receipt', command=self.open_last_receipt, **tile_kw)
         rc.grid(row=0, column=0, sticky='ew', padx=(0, 8))
@@ -2159,40 +2104,14 @@ class StartupManagerGUI(ctk.CTk):
         trust = None
         if ledger_module and custody.get('total'):
             trust = ledger_module.trust_score(custody['verified'], custody['total'])
-        self.hdr_measured_lbl.configure(text=f'{measured:,}')
-        self.hdr_archived_lbl.configure(text=f'{custody.get("verified", 0):,}')
-        selected = sum(self.cleanup_items[i].get('size', 0) for i in self.cleanup_selected
-                       if 0 <= i < len(self.cleanup_items)) if self.cleanup_items else 0
-        reclaim = selected if self.cleanup_selected else self.cleanup_total_size
-        self.hdr_reclaim_lbl.configure(text=self._format_size(reclaim))
         if trust is not None:
-            self.hdr_trust_value.configure(text=f'{trust}')
-            self.hdr_trust_lbl.configure(text='% verified')
+            self.hdr_trust_value.configure(text=f'{trust}%')
+            self.hdr_trust_lbl.configure(
+                text=f'{custody.get("verified", 0):,}/{custody.get("total", 0):,} verified · '
+                     f'{self._format_size(custody.get("bytes_in_custody", 0))} in custody')
         else:
             self.hdr_trust_value.configure(text='—')
-            self.hdr_trust_lbl.configure(text='no custody yet')
-        receipt_path = None
-        if receipts_module:
-            try:
-                receipt_path = receipts_module.latest_receipt()
-            except Exception:
-                pass
-        if receipt_path:
-            stamp = receipt_path.stem.replace('receipt_', '')
-            if len(stamp) >= 8:
-                stamp = f'{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}'
-            self.hdr_receipt_lbl.configure(text=stamp)
-        else:
-            self.hdr_receipt_lbl.configure(text='Not generated')
-        if hasattr(self, '_hdr_compact_trust'):
-            if trust is not None:
-                self._hdr_compact_trust.configure(text=f'Custody trust {trust}%')
-                self._hdr_compact_detail.configure(
-                    text=f'{custody.get("verified", 0):,}/{custody.get("total", 0):,} verified · '
-                         f'{self._format_size(custody.get("bytes_in_custody", 0))} in custody')
-            else:
-                self._hdr_compact_trust.configure(text='Custody trust —')
-                self._hdr_compact_detail.configure(text='No archive custody yet')
+            self.hdr_trust_lbl.configure(text='No archive custody yet')
         self._update_brand_identity()
 
     def _bind_settings_dirty_tracking(self):
@@ -2605,7 +2524,7 @@ class StartupManagerGUI(ctk.CTk):
         hero_inner = ttk.Frame(hero, style='Card.TFrame')
         hero_inner.pack(fill='x', padx=16, pady=14)
         self.cleanup_status_hero = tk.Label(
-            hero_inner, text='Ready to scan', bg=CARD_BG, fg=ACCENT,
+            hero_inner, text='Ready to scan', bg=CARD_BG, fg=PROOF,
             font=('Segoe UI', 18, 'bold'))
         self.cleanup_status_hero.pack(anchor='w')
         self.cleanup_msg_hero = ttk.Label(
@@ -2693,9 +2612,6 @@ class StartupManagerGUI(ctk.CTk):
             self.cleanup_tree.bind(key, lambda e: self.after_idle(self._on_cleanup_select))
         for reason, color in REASON_COLORS.items():
             self.cleanup_tree.tag_configure(f'reason:{reason}', foreground=color)
-        self.cleanup_empty_hint = self._make_empty_hint(
-            self.cleanup_tree, 'No cleanup candidates.\nClick Scan Now to search configured folders.')
-        self._refresh_empty_hint(self.cleanup_empty_hint, self.cleanup_tree)
         cleanup_vscroll = ttk.Scrollbar(tree_wrap, orient='vertical', command=self.cleanup_tree.yview)
         self.cleanup_tree.configure(yscrollcommand=cleanup_vscroll.set)
         self.cleanup_tree.grid(row=0, column=0, sticky='nsew')
@@ -2708,22 +2624,23 @@ class StartupManagerGUI(ctk.CTk):
         ttk.Label(detail_inner, text='Candidate details', font=('Segoe UI', 11, 'bold'),
                   background=CARD_BG).pack(anchor='w', pady=(0, 8))
         self._cleanup_detail_name = ttk.Label(
-            detail_inner, text='—', style='CardInfo.TLabel', wraplength=260,
+            detail_inner, text='No candidate selected', style='CardInfo.TLabel', wraplength=260,
             font=('Segoe UI', 11, 'bold'))
         self._cleanup_detail_name.pack(anchor='w', pady=(0, 8))
         self._cleanup_detail_path = ttk.Label(
-            detail_inner, text='—', style='CardInfo.TLabel', wraplength=260, justify='left')
+            detail_inner, text='', style='CardInfo.TLabel', wraplength=260, justify='left')
         self._cleanup_detail_reason = ttk.Label(
-            detail_inner, text='—', style='CardInfo.TLabel', wraplength=260, justify='left')
+            detail_inner, text='', style='CardInfo.TLabel', wraplength=260, justify='left')
         self._cleanup_detail_size = ttk.Label(
-            detail_inner, text='—', style='CardInfo.TLabel', wraplength=260)
+            detail_inner, text='', style='CardInfo.TLabel', wraplength=260)
         self._cleanup_detail_archive = ttk.Label(
-            detail_inner, text='—', style='CardInfo.TLabel', wraplength=260, justify='left')
+            detail_inner, text='', style='CardInfo.TLabel', wraplength=260, justify='left')
         self._cleanup_detail_receipt = ttk.Label(
-            detail_inner, text='—', style='CardInfo.TLabel', wraplength=260, justify='left')
+            detail_inner, text='', style='CardInfo.TLabel', wraplength=260, justify='left')
         self._cleanup_detail_why = ttk.Label(
-            detail_inner, text='Select a candidate to review path, archive destination, and safety notes.',
-            style='CardInfo.TLabel', wraplength=260, justify='left', foreground=ACCENT)
+            detail_inner,
+            text='Run Scan to populate candidates, then click a row to review path, archive destination, and safety notes.',
+            style='CardInfo.TLabel', wraplength=260, justify='left', foreground=PROOF)
         for lbl in (
             self._cleanup_detail_path, self._cleanup_detail_reason, self._cleanup_detail_size,
             self._cleanup_detail_archive, self._cleanup_detail_receipt, self._cleanup_detail_why,
@@ -2748,6 +2665,25 @@ class StartupManagerGUI(ctk.CTk):
             command=self._cleanup_preview_single)
         self._cleanup_btn_preview.pack(side='left', padx=(6, 0))
 
+        self._cleanup_tree_card = tree_card
+        self._cleanup_detail_panel = detail
+        self._cleanup_empty_panel = ctk_theme.frame(body, CARD_BG, corner_radius=12)
+        empty_inner = ttk.Frame(self._cleanup_empty_panel, style='Card.TFrame')
+        empty_inner.place(relx=0.5, rely=0.42, anchor='center')
+        ttk.Label(
+            empty_inner, text='No cleanup candidates yet.',
+            font=('Segoe UI', 16, 'bold'), background=CARD_BG,
+        ).pack(anchor='center')
+        ttk.Label(
+            empty_inner,
+            text='Run Scan to review configured folders.',
+            style='Info.TLabel', wraplength=420, justify='center',
+        ).pack(anchor='center', pady=(8, 16))
+        ttk.Button(
+            empty_inner, text='Scan Now', style='Primary.TButton', command=self.refresh_cleanup,
+        ).pack(anchor='center')
+        self._update_cleanup_empty_state()
+
         status = ttk.Frame(self.cleanup_tab)
         status.grid(row=4, column=0, sticky='ew', padx=10, pady=(0, 8))
         self.cleanup_status_lbl = ttk.Label(status, text='Ready to scan.', style='Info.TLabel')
@@ -2762,14 +2698,24 @@ class StartupManagerGUI(ctk.CTk):
     def _on_cleanup_select(self):
         sel = self.cleanup_tree.selection()
         if not sel or not self.cleanup_items:
-            self._cleanup_detail_name.config(text='—')
-            self._cleanup_detail_path.config(text='Path: —')
-            self._cleanup_detail_reason.config(text='Category: —')
-            self._cleanup_detail_size.config(text='Size: —')
-            self._cleanup_detail_archive.config(text='Archive destination: —')
-            self._cleanup_detail_receipt.config(text='Receipt: —')
-            self._cleanup_detail_why.config(
-                text='Select a candidate to review path, archive destination, and safety notes.')
+            if not self.cleanup_items:
+                self._cleanup_detail_name.config(text='No candidates yet')
+                self._cleanup_detail_path.config(text='')
+                self._cleanup_detail_reason.config(text='')
+                self._cleanup_detail_size.config(text='')
+                self._cleanup_detail_archive.config(text='')
+                self._cleanup_detail_receipt.config(text='')
+                self._cleanup_detail_why.config(
+                    text='Run Scan to review configured folders, then select a row here.')
+            else:
+                self._cleanup_detail_name.config(text='No candidate selected')
+                self._cleanup_detail_path.config(text='')
+                self._cleanup_detail_reason.config(text='')
+                self._cleanup_detail_size.config(text='')
+                self._cleanup_detail_archive.config(text='')
+                self._cleanup_detail_receipt.config(text='')
+                self._cleanup_detail_why.config(
+                    text='Click a candidate row to review path, archive destination, and safety notes.')
             return
         idx = self.cleanup_tree.index(sel[0])
         if idx < 0 or idx >= len(self.cleanup_items):
@@ -4978,7 +4924,7 @@ class StartupManagerGUI(ctk.CTk):
                                                         self._format_size(item.get('size', 0)),
                                                         name),
                                      tags=(stripe, f'reason:{reason}'))
-        self._refresh_empty_hint(self.cleanup_empty_hint, self.cleanup_tree)
+        self._update_cleanup_empty_state()
         self._on_cleanup_select()
 
     def _toggle_cleanup_index(self, idx):

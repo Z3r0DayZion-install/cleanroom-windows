@@ -151,6 +151,13 @@ def sandbox(tmp_path, monkeypatch):
         }
     finally:
         try:
+            tray = getattr(app, '_tray', None)
+            if tray:
+                tray.stop()
+                app._tray = None
+        except Exception:
+            pass
+        try:
             app.destroy()
         except Exception:
             pass
