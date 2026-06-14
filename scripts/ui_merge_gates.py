@@ -67,7 +67,7 @@ SIDEBAR_CHECKS = (
 
 HOME_ACTION_CHECKS = (
     ('dashboard_primary_btn', 'Scan Now'),
-    ('dashboard_more_btn', 'More'),
+    ('_hdr_more_btn', 'More'),
 )
 
 TOOLBAR_LABELS = (

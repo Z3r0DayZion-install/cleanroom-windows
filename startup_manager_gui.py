@@ -11,6 +11,7 @@ from ui.page_layout import (
     classify_layout,
     create_horizontal_pane,
     ensure_pane_sash,
+    sync_split_workspace,
     sync_table_empty_view,
 )
 from ui.window_geometry import (
@@ -1661,6 +1662,18 @@ class StartupManagerGUI(ctk.CTk):
             self.after(80, lambda: self._ensure_pane(
                 self._activity_pane, 'activity_split', default=520,
                 min_left=340, min_right=260, default_ratio=0.68))
+        pane_tabs = (
+            (2, '_startup_pane', 'startup_split', 480),
+            (3, '_cleanup_pane', 'cleaner_split', 520),
+            (4, '_uninst_pane', 'uninstaller_split', 520),
+            (5, '_restore_pane', 'restore_split', 520),
+            (6, '_archive_pane', 'archive_split', 520),
+        )
+        for tab_idx, attr, key, default in pane_tabs:
+            if current == tab_idx and hasattr(self, attr):
+                pane = getattr(self, attr)
+                self.after(80, lambda p=pane, k=key, d=default: self._ensure_pane(
+                    p, k, default=d, min_left=340, min_right=260, default_ratio=0.62))
         self._sync_sidebar_sections(current)
         self._lazy_load_tab(current)
 
@@ -1714,40 +1727,38 @@ class StartupManagerGUI(ctk.CTk):
         self.optimizer_tab.grid_rowconfigure(2, weight=1)
         self.optimizer_tab.grid_columnconfigure(0, weight=1)
 
-        hero = ctk_theme.frame(self.optimizer_tab, CARD_BG, corner_radius=12)
-        hero.grid(row=0, column=0, sticky='ew', padx=10, pady=(6, 4))
+        hero = ctk_theme.frame(self.optimizer_tab, CARD_BG, corner_radius=10)
+        hero.grid(row=0, column=0, sticky='ew', padx=10, pady=(4, 4))
         hero_inner = ttk.Frame(hero, style='Card.TFrame')
-        hero_inner.pack(fill='x', padx=14, pady=10)
+        hero_inner.pack(fill='x', padx=12, pady=8)
+        title_row = ttk.Frame(hero_inner, style='Card.TFrame')
+        title_row.pack(fill='x')
+        ttk.Label(title_row, text='Home', font=('Segoe UI', 15, 'bold'),
+                  background=CARD_BG).pack(side='left')
         self.dashboard_status_lbl = tk.Label(
-            hero_inner, text='Ready to scan', bg=CARD_BG, fg=PROOF,
-            font=('Segoe UI', 18, 'bold'))
-        self.dashboard_status_lbl.pack(anchor='w', pady=(0, 2))
+            title_row, text='Ready to scan', bg=CARD_BG, fg=PROOF,
+            font=('Segoe UI', 11, 'bold'))
+        self.dashboard_status_lbl.pack(side='left', padx=(12, 0))
         self.dashboard_msg_lbl = ttk.Label(
-            hero_inner,
-            text='Archive-first cleanup with receipts.',
-            style='Info.TLabel', wraplength=760,
-        )
-        self.dashboard_msg_lbl.pack(anchor='w', pady=(0, 8))
+            title_row, text='', style='Info.TLabel')
+        self.dashboard_msg_lbl.pack(side='left', padx=(8, 0))
         cta_row = ttk.Frame(hero_inner, style='Card.TFrame')
-        cta_row.pack(anchor='w')
+        cta_row.pack(anchor='w', pady=(6, 0))
         self.dashboard_primary_btn = ttk.Button(
             cta_row, text='Scan Now', style='Primary.TButton', command=self.refresh_cleanup)
-        self.dashboard_primary_btn.pack(side='left', ipadx=14, ipady=6)
+        self.dashboard_primary_btn.pack(side='left', ipadx=10, ipady=2)
         self.dashboard_preview_btn = ttk.Button(
             cta_row, text='Preview Receipt', style='Action.TButton',
             command=self.preview_cleanup_receipt, state='disabled')
-        self.dashboard_preview_btn.pack(side='left', padx=(10, 0))
+        self.dashboard_preview_btn.pack(side='left', padx=(8, 0))
         self.dashboard_archive_btn = ttk.Button(
             cta_row, text='Archive & Clean', style='Action.TButton',
             command=self.apply_cleanup, state='disabled')
-        self.dashboard_archive_btn.pack(side='left', padx=(10, 0))
+        self.dashboard_archive_btn.pack(side='left', padx=(8, 0))
         self.dashboard_secondary_btn = ttk.Button(
-            cta_row, text='Open Activity', style='Action.TButton',
+            cta_row, text='Proof Ledger', style='Action.TButton',
             command=lambda: self._navigate_to_tab(1))
-        self.dashboard_secondary_btn.pack(side='left', padx=(10, 0))
-        self.dashboard_more_btn = ttk.Button(
-            cta_row, text='More ▾', style='Action.TButton', command=self._show_more_menu)
-        self.dashboard_more_btn.pack(side='left', padx=(10, 0))
+        self.dashboard_secondary_btn.pack(side='left', padx=(8, 0))
         self._add_tooltip(self.dashboard_primary_btn, 'Scan configured folders for cleanup candidates.')
         self.preview_receipt_btn = self.dashboard_primary_btn
 
@@ -2131,6 +2142,16 @@ class StartupManagerGUI(ctk.CTk):
         self._archive_pane, archive_left, archive_right = create_horizontal_pane(self._archive_body)
         self._bind_pane(self._archive_pane, 'archive_split', default=520)
 
+        self._archive_empty_panel = self._build_workspace_empty_panel(
+            self._archive_body,
+            'No archive custody records',
+            'Run a cleanup — archived items will appear here with proof status.',
+            'Refresh', self.refresh_archive_browser,
+        )
+        self._archive_loading_lbl = ttk.Label(
+            self._archive_body, text='Loading archive custody…',
+            style='Info.TLabel', anchor='center', font=('Segoe UI', 12))
+
         tree_card = ctk_theme.frame(archive_left, CARD_BG, corner_radius=10)
         self._archive_tree_card = tree_card
         tree_card.pack(fill='both', expand=True)
@@ -2350,25 +2371,14 @@ class StartupManagerGUI(ctk.CTk):
         )
 
     def _show_text_dialog(self, title, text, width=620, height=480):
-        dlg = tk.Toplevel(self)
-        dlg.title(title)
-        dlg.geometry(f'{width}x{height}')
-        dlg.configure(bg=BG)
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-        frame = ttk.Frame(dlg, style='Content.TFrame')
-        frame.pack(fill='both', expand=True, padx=12, pady=12)
-        txt = tk.Text(frame, wrap='word', font=('Consolas', 10), relief='flat',
-                      bg=PREVIEW_BG, fg=TEXT, insertbackground=TEXT,
-                      highlightthickness=1, highlightbackground=BORDER)
-        scroll = ttk.Scrollbar(frame, orient='vertical', command=txt.yview)
-        txt.configure(yscrollcommand=scroll.set)
-        txt.pack(side='left', fill='both', expand=True)
-        scroll.pack(side='right', fill='y')
-        txt.insert('1.0', text)
-        txt.config(state='disabled')
-        ttk.Button(dlg, text='Close', style='Primary.TButton', command=dlg.destroy).pack(pady=(0, 12))
+        dlg = CleanroomModal(
+            self, title, width=min(width, 680), height=min(height, 520),
+            colors=self._dialog_colors(), resizable=True,
+        )
+        dlg.heading(title, size=14)
+        dlg.scroll_text(text, height=height - 120, mono=True)
+        dlg.add_button('Close', dlg.close, primary=True)
+        return dlg
 
     def preview_cleanup_receipt(self):
         """Draft Cleanroom Receipt for checked candidates — before any archive."""
@@ -2695,6 +2705,17 @@ class StartupManagerGUI(ctk.CTk):
         self._startup_split_mode = None
         self._startup_detail_frame = self._startup_detail_panel
 
+        self._startup_empty_panel = self._build_workspace_empty_panel(
+            self._startup_container,
+            'No startup items',
+            'Try Refresh, clear the search box, or switch category.',
+            'Refresh', self.refresh,
+        )
+        self._startup_loading_lbl = ttk.Label(
+            self._startup_container, text='Loading startup items…',
+            style='Info.TLabel', anchor='center', font=('Segoe UI', 12))
+        self._sync_startup_view(loading=False)
+
         self._add_tooltip(self.refresh_btn, 'Refresh the startup list from registry and startup folders.')
         self._add_tooltip(self.enable_btn, 'Enable the selected registry startup item.')
         self._add_tooltip(self.disable_btn, 'Disable the selected startup item (backed up, restorable).')
@@ -2704,37 +2725,33 @@ class StartupManagerGUI(ctk.CTk):
         self.cleanup_tab.grid_rowconfigure(3, weight=1)
         self.cleanup_tab.grid_columnconfigure(0, weight=1)
 
-        hero = ctk_theme.frame(self.cleanup_tab, CARD_BG, corner_radius=12)
-        hero.grid(row=0, column=0, sticky='ew', padx=10, pady=(8, 6))
+        hero = ctk_theme.frame(self.cleanup_tab, CARD_BG, corner_radius=10)
+        hero.grid(row=0, column=0, sticky='ew', padx=10, pady=(4, 4))
         hero_inner = ttk.Frame(hero, style='Card.TFrame')
-        hero_inner.pack(fill='x', padx=16, pady=14)
+        hero_inner.pack(fill='x', padx=12, pady=8)
+        title_row = ttk.Frame(hero_inner, style='Card.TFrame')
+        title_row.pack(fill='x')
+        ttk.Label(title_row, text='Cleaner', font=('Segoe UI', 15, 'bold'),
+                  background=CARD_BG).pack(side='left')
         self.cleanup_status_hero = tk.Label(
-            hero_inner, text='Ready to scan', bg=CARD_BG, fg=PROOF,
-            font=('Segoe UI', 18, 'bold'))
-        self.cleanup_status_hero.pack(anchor='w')
+            title_row, text='Ready to scan', bg=CARD_BG, fg=PROOF,
+            font=('Segoe UI', 11, 'bold'))
+        self.cleanup_status_hero.pack(side='left', padx=(12, 0))
         self.cleanup_msg_hero = ttk.Label(
-            hero_inner,
-            text='Scan configured folders — preview receipt before any archive.',
-            style='Info.TLabel', wraplength=720,
-        )
-        self.cleanup_msg_hero.pack(anchor='w', pady=(4, 10))
+            title_row, text='', style='Info.TLabel', wraplength=480)
+        self.cleanup_msg_hero.pack(side='left', padx=(8, 0))
         cta_row = ttk.Frame(hero_inner, style='Card.TFrame')
-        cta_row.pack(anchor='w')
+        cta_row.pack(anchor='w', pady=(6, 0))
         self.scan_btn = ttk.Button(
             cta_row, text='Scan Now', style='Primary.TButton', command=self.refresh_cleanup)
-        self.scan_btn.pack(side='left', ipadx=10, ipady=4)
+        self.scan_btn.pack(side='left', ipadx=8, ipady=2)
         self.cleaner_preview_btn = ttk.Button(
             cta_row, text='Preview Receipt', style='Action.TButton',
             command=self.preview_cleanup_receipt)
-        self.cleaner_preview_btn.pack(side='left', padx=(10, 0))
+        self.cleaner_preview_btn.pack(side='left', padx=(8, 0))
         self.apply_clean_btn = ttk.Button(
             cta_row, text='Archive & Clean', style='Action.TButton', command=self.apply_cleanup)
-        self.apply_clean_btn.pack(side='left', padx=(10, 0))
-        ttk.Label(
-            hero_inner,
-            text='Archive-first — files move to custody; nothing is permanently deleted.',
-            style='SubHeader.TLabel', wraplength=720,
-        ).pack(anchor='w', pady=(10, 0))
+        self.apply_clean_btn.pack(side='left', padx=(8, 0))
 
         chips = ttk.Frame(self.cleanup_tab, style='Content.TFrame')
         chips.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 6))
@@ -3196,6 +3213,16 @@ class StartupManagerGUI(ctk.CTk):
         self._restore_pane, restore_left, restore_right = create_horizontal_pane(
             restore_frame, use_pack=True)
         self._bind_pane(self._restore_pane, 'restore_split', default=520)
+
+        self._restore_empty_panel = self._build_workspace_empty_panel(
+            restore_frame,
+            'No restore entries',
+            'Archived files appear here after a cleanup.',
+            'Reload Log', self.refresh_restore,
+        )
+        self._restore_loading_lbl = ttk.Label(
+            restore_frame, text='Loading restore log…',
+            style='Info.TLabel', anchor='center', font=('Segoe UI', 12))
 
         restore_left.grid_rowconfigure(0, weight=1)
         restore_left.grid_columnconfigure(0, weight=1)
@@ -3905,6 +3932,16 @@ class StartupManagerGUI(ctk.CTk):
             uninst_body, use_pack=True)
         self._bind_pane(self._uninst_pane, 'uninstaller_split', default=520)
 
+        self._uninst_empty_panel = self._build_workspace_empty_panel(
+            uninst_body,
+            'No installed programs',
+            'Click Refresh to scan the Programs list.',
+            'Refresh', self.refresh_uninstaller,
+        )
+        self._uninst_loading_lbl = ttk.Label(
+            uninst_body, text='Scanning installed programs…',
+            style='Info.TLabel', anchor='center', font=('Segoe UI', 12))
+
         wrap = ttk.Frame(uninst_left, style='Card.TFrame')
         wrap.pack(fill='both', expand=True)
         cols = ['sel', 'name', 'publisher', 'version', 'size', 'installed']
@@ -3993,11 +4030,13 @@ class StartupManagerGUI(ctk.CTk):
         if uninstaller is None:
             self.uninst_status_lbl.config(text='Uninstaller module unavailable.')
             return
+        self._sync_uninst_view(loading=True)
         self.uninst_status_lbl.config(text='Scanning installed programs…')
 
         def done(result, err):
             if err is not None:
                 self.uninst_status_lbl.config(text=f'Failed to list programs: {err}')
+                self._sync_uninst_view(loading=False)
                 return
             self.uninstall_entries = result or []
             self.uninst_checked.clear()  # indices change with every rescan
@@ -4060,7 +4099,7 @@ class StartupManagerGUI(ctk.CTk):
             self.uninst_count_lbl.config(text=label)
             self.uninst_size_lbl.config(
                 text=self._format_size(total_kb * 1024) if total_kb else '')
-            self._refresh_empty_hint(self.uninst_empty_hint, tree)
+            self._sync_uninst_view(loading=False)
 
         self._chunked_tree_populate(
             tree,
@@ -4072,6 +4111,8 @@ class StartupManagerGUI(ctk.CTk):
             token_key='uninstall_tree',
             clear_selection=False,
         )
+        if not rows_with_idx:
+            on_complete()
 
     def _uninstall_sort(self, col):
         if self._uninst_sort_col == col:
@@ -4806,6 +4847,7 @@ class StartupManagerGUI(ctk.CTk):
 
     def _set_archive_busy(self, busy: bool, message: str = ''):
         self._archive_busy = busy
+        self._sync_archive_view(loading=busy)
         state = 'disabled' if busy else 'normal'
         for attr in ('delete_archive_btn',):
             btn = getattr(self, attr, None)
@@ -4971,6 +5013,55 @@ class StartupManagerGUI(ctk.CTk):
         return tk.Label(tree, text=text, bg=CARD_BG, fg=MUTED,
                         font=('Segoe UI', 10, 'italic'), justify='center')
 
+    def _build_workspace_empty_panel(self, parent, title, body, button_text='', command=None):
+        panel = ctk_theme.frame(parent, CARD_BG, corner_radius=12)
+        inner = ttk.Frame(panel, style='Card.TFrame')
+        inner.place(relx=0.5, rely=0.42, anchor='center')
+        ttk.Label(inner, text=title, font=('Segoe UI', 16, 'bold'),
+                  background=CARD_BG).pack(anchor='center')
+        ttk.Label(inner, text=body, style='Info.TLabel',
+                  wraplength=440, justify='center').pack(anchor='center', pady=(8, 16))
+        if button_text and command:
+            ttk.Button(inner, text=button_text, style='Primary.TButton',
+                       command=command).pack(anchor='center')
+        return panel
+
+    def _sync_startup_view(self, *, loading=False):
+        has = bool(self.tree.get_children()) if hasattr(self, 'tree') else False
+        sync_split_workspace(
+            loading=loading, has_rows=has,
+            pane=getattr(self, '_startup_pane', None),
+            empty_panel=getattr(self, '_startup_empty_panel', None),
+            loading_panel=getattr(self, '_startup_loading_lbl', None),
+        )
+
+    def _sync_restore_view(self, *, loading=False):
+        has = bool(self.restore_tree.get_children()) if hasattr(self, 'restore_tree') else False
+        sync_split_workspace(
+            loading=loading, has_rows=has,
+            pane=getattr(self, '_restore_pane', None),
+            empty_panel=getattr(self, '_restore_empty_panel', None),
+            loading_panel=getattr(self, '_restore_loading_lbl', None),
+        )
+
+    def _sync_uninst_view(self, *, loading=False):
+        has = bool(self.uninstall_tree.get_children()) if hasattr(self, 'uninstall_tree') else False
+        sync_split_workspace(
+            loading=loading, has_rows=has,
+            pane=getattr(self, '_uninst_pane', None),
+            empty_panel=getattr(self, '_uninst_empty_panel', None),
+            loading_panel=getattr(self, '_uninst_loading_lbl', None),
+        )
+
+    def _sync_archive_view(self, *, loading=False):
+        has = bool(self.archive_tree.get_children()) if hasattr(self, 'archive_tree') else False
+        sync_split_workspace(
+            loading=loading, has_rows=has,
+            pane=getattr(self, '_archive_pane', None),
+            empty_panel=getattr(self, '_archive_empty_panel', None),
+            loading_panel=getattr(self, '_archive_loading_lbl', None),
+        )
+
     def _refresh_empty_hint(self, hint, tree):
         if tree.get_children():
             hint.place_forget()
@@ -5119,6 +5210,7 @@ class StartupManagerGUI(ctk.CTk):
                 self.status_lbl.config(
                     text=f'{shown:,} shown' if shown != total else f'{total:,} entries')
             on_complete()
+            self._sync_startup_view(loading=False)
 
         self._chunked_tree_populate(
             self.tree,
@@ -5626,6 +5718,7 @@ class StartupManagerGUI(ctk.CTk):
                      f'{safe_n:,} safe to delete in this view · 0 selected')
             self._update_archive_stat_cards()
             self._on_archive_select()
+            self._sync_archive_view(loading=False)
 
         self._chunked_tree_populate(
             self.archive_tree,
@@ -7026,7 +7119,9 @@ class StartupManagerGUI(ctk.CTk):
             self.restore_tree.delete(*self.restore_tree.get_children())
             self.restore_entries = []
             self._clear_restore_detail()
+            self._sync_restore_view(loading=False)
             return
+        self._sync_restore_view(loading=True)
         self.restore_status_lbl.config(text='Loading restore log…')
         log_path = str(self.restore_log_path)
         filter_text = self.restore_filter_var.get().strip().lower()
@@ -7038,6 +7133,7 @@ class StartupManagerGUI(ctk.CTk):
         def done(result, err):
             if err is not None:
                 self.restore_status_lbl.config(text=f'Load failed: {err}')
+                self._sync_restore_view(loading=False)
                 messagebox.showerror('Restore error', f'Unable to load restore log:\n{err}')
                 return
             entries = result
@@ -7064,7 +7160,7 @@ class StartupManagerGUI(ctk.CTk):
             return (str(idx), (src, dest, ts or ''), (tag,))
 
         def on_complete():
-            self._refresh_empty_hint(self.restore_empty_hint, self.restore_tree)
+            self._sync_restore_view(loading=False)
 
         self._chunked_tree_populate(
             self.restore_tree,
@@ -7074,6 +7170,8 @@ class StartupManagerGUI(ctk.CTk):
             on_complete=on_complete,
             token_key='restore_tree',
         )
+        if not entries:
+            on_complete()
 
     def _selected_restore_index(self):
         sel = self.restore_tree.selection()
@@ -7871,6 +7969,7 @@ class StartupManagerGUI(ctk.CTk):
 
     def refresh(self):
         self.refresh_btn.config(state='disabled')
+        self._sync_startup_view(loading=True)
         self.status_lbl.config(text='Refreshing...')
         self._set_status('Refreshing startup entries...')
 
@@ -7879,6 +7978,7 @@ class StartupManagerGUI(ctk.CTk):
             if err is not None:
                 self.status_lbl.config(text=f'Refresh failed: {err}')
                 self._set_status('Refresh failed.')
+                self._sync_startup_view(loading=False)
                 return
             self.data = data
             self._apply_filter()

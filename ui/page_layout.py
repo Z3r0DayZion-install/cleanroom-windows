@@ -102,6 +102,57 @@ class EmptyStateCard:
         self.frame.grid_remove()
 
 
+def _hide_widget(widget) -> None:
+    if widget is None:
+        return
+    try:
+        widget.pack_forget()
+        return
+    except Exception:
+        pass
+    try:
+        widget.grid_remove()
+    except Exception:
+        pass
+
+
+def _show_widget_fill(widget) -> None:
+    if widget is None:
+        return
+    try:
+        widget.pack(fill='both', expand=True)
+        return
+    except Exception:
+        pass
+    try:
+        widget.grid(row=0, column=0, sticky='nsew')
+    except Exception:
+        pass
+
+
+def sync_split_workspace(
+    *,
+    loading: bool,
+    has_rows: bool,
+    pane,
+    empty_panel,
+    loading_panel=None,
+) -> None:
+    """Shared Loading / Empty / Results states for table + details splits."""
+    _hide_widget(loading_panel)
+    if loading:
+        _hide_widget(pane)
+        _hide_widget(empty_panel)
+        _show_widget_fill(loading_panel)
+        return
+    if has_rows:
+        _hide_widget(empty_panel)
+        _show_widget_fill(pane)
+    else:
+        _hide_widget(pane)
+        _show_widget_fill(empty_panel)
+
+
 def sync_table_empty_view(
     *,
     has_rows: bool,
