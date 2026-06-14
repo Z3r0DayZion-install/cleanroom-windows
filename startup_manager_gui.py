@@ -1094,20 +1094,23 @@ class StartupManagerGUI(ctk.CTk):
             more_groups=(
                 ('Receipts', (
                     ('Latest Receipt', self.open_last_receipt),
-                    ('Proof Pack (HTML)', self.export_audit),
+                    ('Receipt Viewer', self.open_last_receipt),
+                    ('Proof Pack', self.export_audit),
                 )),
                 ('Custody', (
                     ('Verify Custody', self.verify_custody),
-                    ('Open Archive', self.open_archive_browser_tab),
+                    ('Open Archive Folder', self.open_archive_folder),
+                    ('Custody Check', self.verify_custody),
                 )),
                 ('Tools', (
+                    ('Explorer Context Menus', self.open_shell_context_menu_tool),
                     ('Registry Snapshot', self.open_registry_health),
                     ('Cleanroom Rewind', self.open_time_machine),
                     ('Schedule Cleanup', self.schedule_optimization),
                 )),
                 ('Diagnostics', (
                     ('Local Logs', self._show_diagnostics_dialog),
-                    ('Change theme…', self.cycle_theme),
+                    ('App Diagnostics', self._show_diagnostics_dialog),
                 )),
             ),
         )
@@ -1437,6 +1440,7 @@ class StartupManagerGUI(ctk.CTk):
             self._brand_pill_frame.configure(fg_color=state['pill_fg'])
         except Exception:
             pass
+        self._refresh_tray_tooltip()
 
     def _navigate_to_tab(self, idx):
         self.tab_control.select(idx)
@@ -1979,7 +1983,7 @@ class StartupManagerGUI(ctk.CTk):
         ttk.Label(qa_delete, text='Delete from archive', style='CardInfo.TLabel').pack(
             side='left', padx=(0, 10))
         self.delete_archive_btn = ttk.Button(
-            qa_delete, text='Delete Selected…', style='Action.TButton',
+            qa_delete, text='Delete Eligible…', style='Action.TButton',
             command=self.confirm_prune_selected)
         self.delete_archive_btn.pack(side='left', padx=(0, 6))
         self._add_tooltip(self.delete_archive_btn,
@@ -4695,12 +4699,40 @@ class StartupManagerGUI(ctk.CTk):
         dlg.add_button('Close', dlg.close, primary=True)
         self.after(0, pump)
 
+    def get_tray_tooltip(self) -> str:
+        """Live tray tooltip — proof state, not just app name."""
+        try:
+            state = self._compute_brand_state()
+            pill = state.get('pill') or brand.APP_LOCKUP_PILL
+            status = state.get('status') or ''
+            if status:
+                return f'{brand.APP_DISPLAY} — {status}'
+            return f'{brand.APP_DISPLAY} — {pill}'
+        except Exception:
+            pass
+        try:
+            txt = self.global_status.cget('text')
+            if txt:
+                return f'{brand.APP_DISPLAY} — {txt}'
+        except Exception:
+            pass
+        return f'{brand.APP_DISPLAY} — Archive-first ON'
+
+    def _refresh_tray_tooltip(self):
+        tray = getattr(self, '_tray', None)
+        if tray is not None:
+            try:
+                tray.refresh_tooltip()
+            except Exception:
+                pass
+
     def _set_status(self, text, *, pulse=False):
         try:
             self.global_status.config(text=text)
             if pulse and not animations_disabled():
                 self.global_status.config(fg=ACCENT)
                 self.after(420, lambda: self.global_status.config(fg=TEXT))
+            self._refresh_tray_tooltip()
         except Exception:
             pass
 

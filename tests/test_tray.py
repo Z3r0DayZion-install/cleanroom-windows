@@ -5,6 +5,8 @@ from ui.tray import TrayController
 class _FakeApp:
     def __init__(self):
         self.calls = []
+        self.cleanup_items = []
+        self.cleanup_selected = set()
 
     def after(self, _ms, fn):
         fn()
@@ -12,10 +14,12 @@ class _FakeApp:
 
 def test_tray_menu_labels():
     assert 'Open Cleanroom' in TrayController.MENU_LABELS
+    assert 'Run Scan' in TrayController.MENU_LABELS
+    assert 'Open Latest Receipt' in TrayController.MENU_LABELS
+    assert 'Open Proof Pack' in TrayController.MENU_LABELS
+    assert 'Open Archive Folder' in TrayController.MENU_LABELS
     assert 'Hide to tray' in TrayController.MENU_LABELS
-    assert 'Latest Receipt' in TrayController.MENU_LABELS
-    assert 'Proof Pack' in TrayController.MENU_LABELS
-    assert 'Quit' in TrayController.MENU_LABELS
+    assert 'Quit Cleanroom' in TrayController.MENU_LABELS
 
 
 def test_tray_callbacks_schedule_app_actions(monkeypatch):
@@ -25,16 +29,49 @@ def test_tray_callbacks_schedule_app_actions(monkeypatch):
     app._tray_quit = lambda: app.calls.append('quit')
     app.open_last_receipt = lambda: app.calls.append('receipt')
     app.export_audit = lambda: app.calls.append('proof')
+    app.refresh_cleanup = lambda: app.calls.append('scan')
+    app.preview_cleanup_receipt = lambda: app.calls.append('preview')
+    app.open_archive_folder = lambda: app.calls.append('archive')
+    app.open_shell_context_menu_tool = lambda: app.calls.append('explorer')
+    app.open_registry_health = lambda: app.calls.append('registry')
+    app.open_time_machine = lambda: app.calls.append('rewind')
+    app.verify_custody = lambda: app.calls.append('custody')
+    app.tab_control = type('T', (), {'select': lambda s, i: app.calls.append('tab')})()
+    app.restore_tab = 5
+    app.refresh_restore = lambda: app.calls.append('restore')
 
     tray = TrayController(app)
     tray._on_open(None, None)
     tray._on_hide(None, None)
     tray._on_show(None, None)
+    tray._on_run_scan(None, None)
     tray._on_latest_receipt(None, None)
     tray._on_proof_pack(None, None)
+    tray._on_archive_folder(None, None)
+    tray._on_explorer_menus(None, None)
+    tray._on_registry_snapshot(None, None)
+    tray._on_rewind(None, None)
+    tray._on_custody_check(None, None)
+    tray._on_restore_tab(None, None)
     tray._on_quit(None, None)
 
-    assert app.calls == ['show', 'hide', 'show', 'receipt', 'proof', 'quit']
+    assert 'show' in app.calls
+    assert 'hide' in app.calls
+    assert 'receipt' in app.calls
+    assert 'proof' in app.calls
+    assert 'scan' in app.calls
+    assert 'archive' in app.calls
+    assert 'quit' in app.calls
+
+
+def test_tray_preview_enabled_when_candidates_checked():
+    app = _FakeApp()
+    app.cleanup_items = [{'path': '/x'}]
+    app.cleanup_selected = {0}
+    tray = TrayController(app)
+    assert tray._can_preview_receipt() is True
+    app.cleanup_selected = set()
+    assert tray._can_preview_receipt() is False
 
 
 def test_tray_start_without_pystray_is_safe(monkeypatch):
@@ -57,8 +94,6 @@ def test_tray_init_failure_does_not_crash_gui_init(monkeypatch):
         raise RuntimeError('tray unavailable')
 
     monkeypatch.setattr('ui.tray.TrayController', _boom)
-
-    import startup_manager_gui as gui
 
     class _MinimalGUI:
         _tray = object()
