@@ -36,6 +36,7 @@ from ui.page_state import (
 from ui.proof_dashboard import (
     CommandBar,
     ProofSummaryCard,
+    app_shell_header,
     brand_identity_block,
     collapsible_section,
     recent_proof_tile,
@@ -339,6 +340,22 @@ logger = logging.getLogger(__name__)
 
 APP_VERSION = brand.APP_VERSION
 SEARCH_PLACEHOLDER = 'Search startup items...  (Ctrl+F)'
+
+ACTIVITY_EVENT_LABELS = {
+    'file': 'Archived',
+    'registry': 'Archived',
+    'prune': 'Pruned',
+    'restore': 'Restored',
+}
+
+CLEANUP_REASON_GROUPS = (
+    ('Installers & archives', frozenset({
+        'installer/archive', 'installer', 'old-installer', 'duplicate', 'partial-download',
+    })),
+    ('Zero-byte files', frozenset({'zero-byte'})),
+    ('Large files', frozenset({'large-file'})),
+    ('Other', None),
+)
 
 
 class StartupManagerGUI(ctk.CTk):
@@ -857,8 +874,11 @@ class StartupManagerGUI(ctk.CTk):
                 self.ctx_subtitle_lbl.pack_forget()
             else:
                 self.ctx_subtitle_lbl.pack(side='left', padx=(8, 0))
-        if hasattr(self, '_brand_status_lbl'):
-            self._brand_status_lbl.configure(wraplength=max(140, min(200, w - 60)))
+        if hasattr(self, '_hdr_settings_btn'):
+            self._hdr_settings_btn.configure(
+                text='⚙' if w < 980 else 'Settings',
+                width=40 if w < 980 else 88,
+            )
         if hasattr(self, '_proof_flow_lbl'):
             self._proof_flow_lbl.pack_forget()
         if hasattr(self, '_command_bar'):
@@ -873,7 +893,7 @@ class StartupManagerGUI(ctk.CTk):
             )
         tree_rows = max(5, min(12, (h - 420) // 28))
         if hasattr(self, 'cleanup_tree'):
-            self.cleanup_tree.column('item', width=max(160, min(520, w - 380)))
+            self.cleanup_tree.column('#0', width=max(160, min(520, w - 380)))
         if hasattr(self, 'archive_tree'):
             self.archive_tree.configure(height=tree_rows)
         detail_w = max(200, min(420, int(w * 0.30)))
@@ -1006,9 +1026,8 @@ class StartupManagerGUI(ctk.CTk):
 
         shell = self._body_center
         self._build_header(shell)
-        self._build_context_bar(shell)
         main = ttk.Frame(shell)
-        main.pack(fill='both', expand=True, padx=10, pady=(0, 0))
+        main.pack(fill='both', expand=True, padx=8, pady=(0, 0))
         self._shell_pane = ttk.PanedWindow(main, orient='horizontal')
         self._shell_pane.pack(fill='both', expand=True, pady=(0, 6))
         sidebar_host = ttk.Frame(self._shell_pane)
@@ -1110,7 +1129,7 @@ class StartupManagerGUI(ctk.CTk):
     def _build_header(self, parent=None):
         host = parent or self
         top = ctk_theme.frame(host, BG)
-        top.pack(fill='x', padx=14, pady=(8, 4))
+        top.pack(fill='x', padx=8, pady=(4, 2))
         self._hdr_top = top
 
         self._command_bar = CommandBar(
@@ -1158,22 +1177,37 @@ class StartupManagerGUI(ctk.CTk):
         self.tb_apply = self._command_bar.tb_apply
         self.tb_restore = self._command_bar.tb_restore
         self._proof_flow_lbl = self._command_bar._proof_flow_lbl
+        self._command_bar.set_page_mode(dashboard=True)
 
         self._hdr_summary = ctk_theme.frame(top, BG)
         self._hdr_badges = None
         self._hdr_hero = None
 
-        self._hdr_compact, self.hdr_trust_value, self.hdr_trust_lbl, self.hdr_trust_why = trust_compact_strip(
+        header_logo = self._load_logo(22)
+        if header_logo is not None:
+            self._header_logo = header_logo
+        shell_parts = app_shell_header(
             top,
             bg=BG,
-            proof_soft=PROOF_SOFT,
-            proof=PROOF,
-            text_color=TEXT,
+            bar_bg=HEAD_BG,
+            text=TEXT,
             muted=MUTED,
+            proof=PROOF,
+            proof_soft=PROOF_SOFT,
             head_bg=HEAD_BG,
+            logo_photo=getattr(self, '_header_logo', None),
             on_why=self._show_custody_trust_why,
+            on_settings=self._open_settings,
+            on_more=self._show_more_menu,
         )
-        self._hdr_compact.pack(fill='x', pady=(4, 0))
+        self._hdr_shell = shell_parts['frame']
+        self._hdr_compact = shell_parts['custody_frame']
+        self.hdr_trust_value = shell_parts['trust_value']
+        self.hdr_trust_lbl = shell_parts['trust_caption']
+        self.hdr_trust_why = shell_parts['why_btn']
+        self._archive_badge = shell_parts['archive_badge']
+        self._hdr_settings_btn = shell_parts['settings_btn']
+        self._hdr_more_btn = shell_parts['more_btn']
 
         self._archive_banner = ctk_theme.frame(top, PROOF_SOFT, corner_radius=8)
         ctk_theme.label(
@@ -1181,29 +1215,32 @@ class StartupManagerGUI(ctk.CTk):
             text_color=PROOF, font_size=9, weight='bold',
         ).pack(anchor='w', padx=12, pady=6)
         self._archive_banner.pack_forget()
-
-        self._archive_badge = ctk_theme.frame(top, PROOF_SOFT, corner_radius=6)
-        ctk_theme.label(
-            self._archive_badge, 'Archive-first ON',
-            text_color=PROOF, font_size=8, weight='bold',
-        ).pack(side='left', padx=10, pady=3)
-        self._archive_badge.pack_forget()
-        self._archive_banner_collapsed = bool(load_ui_prefs().get('archive_banner_collapsed', False))
+        self._archive_banner_collapsed = True
 
         self._add_tooltip(self.hdr_trust_value,
                           'Custody trust — % of archived artifacts verified on disk right now.')
         nxt = THEME_ORDER[(THEME_ORDER.index(CURRENT_THEME) + 1) % len(THEME_ORDER)]
+        self._add_tooltip(self._hdr_settings_btn, 'Open Settings (Ctrl+,)')
+        self._add_tooltip(self._hdr_more_btn,
+                          f'More tools — theme ({PALETTES[CURRENT_THEME]["LABEL"]} → '
+                          f'{PALETTES[nxt]["LABEL"]}), receipts, proof pack, schedule.')
         self._add_tooltip(self.tb_scan, 'Scan configured folders for cleanup candidates. (F5 refreshes everything)')
         self._add_tooltip(self.tb_preview, 'Preview what the Cleanroom Receipt will say before you archive anything.')
         self._add_tooltip(self.tb_apply, 'Move checked items to the archive — nothing is permanently deleted.')
         self._add_tooltip(self.tb_restore, 'Open Restore tab and reload archived entries.')
-        self._add_tooltip(self._command_bar._more_btn,
-                          f'More tools — theme ({PALETTES[CURRENT_THEME]["LABEL"]} → '
-                          f'{PALETTES[nxt]["LABEL"]}), receipts, proof pack, schedule.')
+
+    def _open_settings(self):
+        """Global Settings — header chrome, not sidebar workflow."""
+        self.tab_control.select(7)
+        self._sync_nav_buttons()
 
     def _show_more_menu(self):
         if hasattr(self, '_command_bar'):
-            self._command_bar._show_more()
+            anchor = getattr(self, '_hdr_more_btn', None)
+            if anchor is not None:
+                self._command_bar.show_more_at(anchor)
+            else:
+                self._command_bar._show_more()
 
     def _update_cleanup_empty_state(self):
         if not hasattr(self, '_cleanup_empty_panel'):
@@ -1249,6 +1286,15 @@ class StartupManagerGUI(ctk.CTk):
         self.ctx_desc_lbl = None
 
     def _update_context_panel(self):
+        if not hasattr(self, 'ctx_page_lbl'):
+            try:
+                tab_idx = self.tab_control.index('current')
+            except Exception:
+                tab_idx = 0
+            if hasattr(self, '_command_bar'):
+                self._command_bar.set_context(tab_idx)
+            self._update_brand_identity(tab_idx)
+            return
         try:
             tab_idx = self.tab_control.index('current')
         except Exception:
@@ -1431,7 +1477,7 @@ class StartupManagerGUI(ctk.CTk):
             else:
                 status = 'Browse archived copies before deleting custody'
         elif tab_idx == 7:
-            title = 'Control Room'
+            title = 'Settings'
             if getattr(self, '_settings_dirty', False):
                 status = 'Unsaved changes — Save Settings to apply'
                 pill = 'Unsaved'
@@ -1455,32 +1501,7 @@ class StartupManagerGUI(ctk.CTk):
         }
 
     def _update_brand_identity(self, tab_idx=None):
-        """Refresh sidebar brand block from current tab and app state."""
-        if not hasattr(self, '_brand_title_lbl'):
-            return
-        state = self._compute_brand_state(tab_idx)
-        try:
-            self._brand_title_lbl.configure(
-                text=state['title'],
-                text_color=ACCENT if state.get('title_accent') else TEXT,
-                font=ctk_theme.font(17, 'bold'),
-            )
-            if hasattr(self, '_brand_tagline_lbl'):
-                if state.get('show_tagline'):
-                    self._brand_tagline_lbl.configure(text=state['tagline'])
-                    self._brand_tagline_lbl.pack(anchor='w', pady=(2, 0))
-                else:
-                    self._brand_tagline_lbl.pack_forget()
-            if state.get('status'):
-                self._brand_status_lbl.configure(text=state['status'])
-                self._brand_status_lbl.pack(anchor='w', pady=(2, 0))
-            else:
-                self._brand_status_lbl.configure(text='')
-                self._brand_status_lbl.pack_forget()
-            self._brand_pill_lbl.configure(text=state['pill'], text_color=state['pill_text'])
-            self._brand_pill_frame.configure(fg_color=state['pill_fg'])
-        except Exception:
-            pass
+        """Refresh tray tooltip from app state — page identity lives in content, not chrome."""
         self._refresh_tray_tooltip()
 
     def _navigate_to_tab(self, idx):
@@ -1504,40 +1525,19 @@ class StartupManagerGUI(ctk.CTk):
     def _build_sidebar(self, parent):
         sidebar = ctk_theme.frame(parent, SIDEBAR_BG, corner_radius=10)
         sidebar.pack(fill='both', expand=True)
-        sidebar.grid_rowconfigure(1, weight=1)
+        sidebar.grid_rowconfigure(0, weight=1)
         sidebar.grid_columnconfigure(0, weight=1)
-
-        self._sidebar_logo = self._load_logo(32)
-        identity = brand_identity_block(
-            sidebar,
-            bg=SIDEBAR_BG,
-            accent=ACCENT,
-            accent_soft=ACCENT_SOFT,
-            text_color=TEXT,
-            muted=MUTED,
-            logo_photo=self._sidebar_logo,
-            default_title=brand.APP_DISPLAY,
-            default_tagline=brand.APP_LOCKUP_TAGLINE,
-            default_pill=brand.APP_LOCKUP_PILL,
-        )
-        identity['frame'].grid(row=0, column=0, sticky='ew', padx=4, pady=(4, 0))
-        self._sidebar_identity = identity['frame']
-        self._brand_title_lbl = identity['title_lbl']
-        self._brand_tagline_lbl = identity['tagline_lbl']
-        self._brand_status_lbl = identity['status_lbl']
-        self._brand_pill_lbl = identity['pill_lbl']
-        self._brand_pill_frame = identity['pill_frame']
 
         nav_scroll = ctk.CTkScrollableFrame(
             sidebar, fg_color=SIDEBAR_BG, corner_radius=0, width=214,
             scrollbar_button_color=BORDER, scrollbar_button_hover_color=HEAD_BG,
         )
-        nav_scroll.grid(row=1, column=0, sticky='nsew', padx=4, pady=(0, 4))
-        sidebar.grid_rowconfigure(1, weight=1)
+        nav_scroll.grid(row=0, column=0, sticky='nsew', padx=4, pady=(4, 2))
         self._sidebar_nav_scroll = nav_scroll
         self._nav_buttons = []
         nav_kw = dict(
-            sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT, text_color=TEXT, hover_color=HEAD_BG,
+            sidebar_bg=SIDEBAR_BG, accent_soft=ACCENT_SOFT, text_color=TEXT,
+            hover_color=HEAD_BG, accent=ACCENT, on_accent=ON_ACCENT,
         )
         section_kw = dict(sidebar_bg=SIDEBAR_BG, muted=MUTED, text_color=TEXT, hover_bg=HEAD_BG)
 
@@ -1548,11 +1548,11 @@ class StartupManagerGUI(ctk.CTk):
             (0, 'Home', 'Proof home — custody status and next archive-first action.'),
             (3, 'Cleaner', 'Scan folders and archive reviewed files to custody.'),
             (6, 'Archive', 'Archive custody — browse, delete, reclaim disk space.'),
-            (1, 'Activity', 'Activity ledger — every archive with timestamps.'),
+            (1, 'Proof Ledger', 'Every action has a receipt — verify custody and restore.'),
         ):
             btn = sidebar_nav_button(
                 main_body, label, lambda i=idx: self._navigate_to_tab(i), **nav_kw)
-            btn.pack(fill='x', pady=3, padx=8)
+            btn.pack(fill='x', pady=2, padx=6)
             self._nav_buttons.append((idx, btn))
             self._add_tooltip(btn, tip)
 
@@ -1565,11 +1565,10 @@ class StartupManagerGUI(ctk.CTk):
             (2, 'Startup', 'Startup programs — filter by source, enable or disable.'),
             (4, 'Uninstaller', 'Uninstall programs and archive leftovers.'),
             (5, 'Restore', 'Restore archived files from the cleanup log.'),
-            (7, 'Settings', 'Scan paths, ages, archive folder, quick toggles.'),
         ):
             btn = sidebar_nav_button(
                 sys_body, label, lambda i=idx: self._navigate_to_tab(i), **nav_kw)
-            btn.pack(fill='x', pady=3, padx=8)
+            btn.pack(fill='x', pady=2, padx=6)
             self._nav_buttons.append((idx, btn))
             self._add_tooltip(btn, tip)
 
@@ -1579,31 +1578,29 @@ class StartupManagerGUI(ctk.CTk):
         self._sidebar_tools_toggle = tools_toggle
         self._sidebar_tools_body = tools_body
         tools = [
-            ('Explorer Context Menus…', self.open_shell_context_menu_tool,
+            ('Explorer Menus', self.open_shell_context_menu_tool,
              'Build and install Windows Explorer right-click menus (HKCU, per-user).\n'
              'Add presets or custom menus, then Install to Explorer.'),
             ('Registry Snapshot', self.open_registry_health,
              'Find registry entries pointing at missing files.'),
-            ('Cleanroom Rewind', self.open_time_machine,
+            ('Rewind', self.open_time_machine,
              'Roll back whole days of Cleanroom actions.'),
-            ('Cleanroom Receipt', self.open_last_receipt,
-             'View the receipt from your most recent cleanup.'),
-            ('Proof Pack (HTML)', self.export_audit,
+            ('Proof Pack', self.export_audit,
              'Generate a shareable HTML proof report.'),
             ('Custody Check', self.verify_custody,
              'Audit history — prove archived items are still on disk.'),
-            ('Schedule Cleanup', self.schedule_optimization,
-             'Schedule recurring cleanup via Task Scheduler.'),
+            ('Lights Out', self._open_lights_out,
+             'Install the wind-down / shutdown companion app.'),
         ]
         for i, (label, cmd, tip) in enumerate(tools):
             btn = sidebar_nav_button(tools_body, label, cmd, **nav_kw)
-            btn.pack(fill='x', pady=3, padx=8)
+            btn.pack(fill='x', pady=2, padx=6)
             if i == 0:
                 self._sidebar_explorer_btn = btn
             self._add_tooltip(btn, tip)
 
         footer = ctk_theme.frame(sidebar, SIDEBAR_BG)
-        footer.grid(row=2, column=0, sticky='ew', padx=10, pady=(4, 10))
+        footer.grid(row=1, column=0, sticky='ew', padx=10, pady=(4, 10))
         foot_row = ctk_theme.frame(footer, SIDEBAR_BG)
         foot_row.pack(fill='x')
         self._sidebar_collapse_btn = ctk_theme.button(
@@ -1612,13 +1609,13 @@ class StartupManagerGUI(ctk.CTk):
             width=28, height=22,
         )
         self._sidebar_collapse_btn.pack(side='right')
-        ctk_theme.label(foot_row, 'F5 · Ctrl+F · Ctrl+1–8',
+        ctk_theme.label(foot_row, 'F5 · Ctrl+F · Ctrl+,',
                         text_color=MUTED, font_size=9).pack(side='left', anchor='w')
 
     def _sync_sidebar_sections(self, tab_idx: int):
         """Expand System when a system tab is active."""
         try:
-            if tab_idx in (2, 4, 5, 7) and hasattr(self, '_sidebar_sys_body'):
+            if tab_idx in (2, 4, 5) and hasattr(self, '_sidebar_sys_body'):
                 if not self._sidebar_sys_body.winfo_ismapped() and self._sidebar_sys_toggle:
                     self._sidebar_sys_toggle.invoke()
         except Exception:
@@ -1644,13 +1641,15 @@ class StartupManagerGUI(ctk.CTk):
             current = 0
         for i, btn in self._nav_buttons:
             if i == current:
-                btn.configure(fg_color=ACCENT_SOFT, text_color=ACCENT,
-                              hover_color=ACCENT_SOFT,
-                              font=ctk_theme.font(11, 'bold'))
+                btn.configure(
+                    fg_color=ACCENT, text_color=ON_ACCENT, hover_color=ACCENT,
+                    font=ctk_theme.font(ctk_theme.TYPE_BODY, 'bold'),
+                )
             else:
-                btn.configure(fg_color='transparent', text_color=TEXT,
-                              hover_color=HEAD_BG,
-                              font=ctk_theme.font(11, 'normal'))
+                btn.configure(
+                    fg_color='transparent', text_color=TEXT, hover_color=HEAD_BG,
+                    font=ctk_theme.font(ctk_theme.TYPE_BODY, 'normal'),
+                )
         prefs = load_ui_prefs()
         prefs['last_tab'] = current
         save_ui_prefs(prefs)
@@ -1689,51 +1688,25 @@ class StartupManagerGUI(ctk.CTk):
                     min_left=340, min_right=260, default_ratio=0.68)
 
     def _update_page_chrome(self, tab_idx=None):
-        """Adaptive header — minimal chrome on workspace pages."""
+        """Single app shell header — no stacked context/archive banners."""
         if tab_idx is None:
             try:
                 tab_idx = self.tab_control.index('current')
             except Exception:
                 tab_idx = 0
-        dashboard = tab_idx == 0
-        self._page_is_dashboard = dashboard
-        show_trust = tab_idx in (0, 3, 6)
-        show_archive = tab_idx in (0, 3) and not getattr(self, '_archive_banner_collapsed', False)
-        show_archive_badge = tab_idx in (0, 3) and getattr(self, '_archive_banner_collapsed', False)
+        self._page_is_dashboard = tab_idx == 0
         try:
             if hasattr(self, '_hdr_summary'):
                 self._hdr_summary.pack_forget()
-            if hasattr(self, '_hdr_compact'):
-                if show_trust or show_archive_badge:
-                    self._hdr_compact.pack(fill='x', pady=(2, 0))
-                else:
-                    self._hdr_compact.pack_forget()
             if hasattr(self, '_archive_banner'):
-                if show_archive:
-                    self._archive_banner.pack(fill='x', pady=(2, 0))
-                    prefs = load_ui_prefs()
-                    if not prefs.get('archive_banner_seen'):
-                        prefs = dict(prefs)
-                        prefs['archive_banner_seen'] = True
-                        save_ui_prefs(prefs)
-                        self.after(4000, self._collapse_archive_banner)
-                else:
-                    self._archive_banner.pack_forget()
-            if hasattr(self, '_archive_badge'):
-                if show_archive_badge:
-                    self._archive_badge.pack(fill='x', pady=(2, 0))
-                else:
-                    self._archive_badge.pack_forget()
+                self._archive_banner.pack_forget()
             if hasattr(self, '_context_bar'):
-                if dashboard:
-                    self._context_bar.pack_forget()
-                else:
-                    self._context_bar.pack(fill='x', padx=14, pady=(0, 6))
+                self._context_bar.pack_forget()
+            if hasattr(self, '_command_bar'):
+                self._command_bar.set_page_mode(dashboard=True, tab_idx=tab_idx)
         except Exception:
             pass
         self._update_brand_identity(tab_idx)
-        if hasattr(self, '_command_bar'):
-            self._command_bar.set_page_mode(dashboard=dashboard, tab_idx=tab_idx)
         if hasattr(self, '_update_responsive_layout'):
             self._update_responsive_layout()
 
@@ -1916,9 +1889,13 @@ class StartupManagerGUI(ctk.CTk):
         self.activity_tab.grid_columnconfigure(0, weight=1)
 
         head = ttk.Frame(self.activity_tab, style='Content.TFrame')
-        head.grid(row=0, column=0, sticky='ew', padx=10, pady=(8, 4))
-        ttk.Label(head, text='Proof Ledger', font=('Segoe UI', 13, 'bold'),
-                  background=BG).pack(side='left')
+        head.grid(row=0, column=0, sticky='ew', padx=10, pady=(6, 4))
+        head_left = ttk.Frame(head, style='Content.TFrame')
+        head_left.pack(side='left', fill='x', expand=True)
+        ttk.Label(head_left, text='Proof Ledger', font=('Segoe UI', 18, 'bold'),
+                  background=BG).pack(anchor='w')
+        ttk.Label(head_left, text='Every action has a receipt.',
+                  style='Info.TLabel').pack(anchor='w', pady=(2, 0))
         self.act_status_lbl = ttk.Label(head, text='', style='Badge.TLabel')
         self.act_status_lbl.pack(side='left', padx=(10, 0))
         self.act_refresh_btn = ttk.Button(head, text='Refresh', style='Action.TButton',
@@ -1984,7 +1961,7 @@ class StartupManagerGUI(ctk.CTk):
         cols = ('status', 'when', 'type', 'reason', 'item', 'size')
         self.activity_tree = ttk.Treeview(tree_card, columns=cols, show='headings', selectmode='browse')
         for c, label, w in (
-            ('status', 'Proof', 56), ('when', 'When', 128), ('type', 'Type', 72),
+            ('status', 'Proof', 56), ('when', 'When', 128), ('type', 'Event', 88),
             ('reason', 'Reason', 100), ('item', 'Item', 200), ('size', 'Size', 72),
         ):
             self.activity_tree.heading(c, text=label)
@@ -2210,19 +2187,38 @@ class StartupManagerGUI(ctk.CTk):
                   background=CARD_BG).pack(anchor='w', pady=(0, 8))
         qa_grid = ttk.Frame(detail_inner, style='Card.TFrame')
         qa_grid.pack(fill='x', pady=(0, 8))
-        qa_grid.columnconfigure(0, weight=1)
-        qa_grid.columnconfigure(1, weight=1)
-        quick_btns = (
-            ('Restore', self._archive_restore_selected),
-            ('Delete…', self.confirm_prune_selected),
+
+        restore_box = ttk.Frame(qa_grid, style='Card.TFrame')
+        restore_box.pack(fill='x', pady=(0, 10))
+        ttk.Label(restore_box, text='Restore / Inspect', font=('Segoe UI', 10, 'bold'),
+                  background=CARD_BG).pack(anchor='w', pady=(0, 6))
+        restore_row = ttk.Frame(restore_box, style='Card.TFrame')
+        restore_row.pack(fill='x')
+        for label, cmd in (
+            ('Restore Selected', self._archive_restore_selected),
             ('Open Receipt', self._archive_open_receipt),
-            ('Open Archive', self._archive_open_archive),
+            ('Open Archive Folder', self._archive_open_archive),
             ('Open Original', self._archive_open_original),
             ('Copy paths', self._archive_copy_path),
-        )
-        for i, (label, cmd) in enumerate(quick_btns):
-            ttk.Button(qa_grid, text=label, style='Action.TButton', command=cmd).grid(
-                row=i // 2, column=i % 2, sticky='ew', padx=2, pady=2)
+        ):
+            ttk.Button(restore_row, text=label, style='Action.TButton', command=cmd).pack(
+                side='left', padx=(0, 6), pady=2)
+
+        delete_box = ttk.Frame(qa_grid, style='Card.TFrame')
+        delete_box.pack(fill='x')
+        ttk.Label(delete_box, text='Archive cleanup', font=('Segoe UI', 10, 'bold'),
+                  background=CARD_BG).pack(anchor='w', pady=(0, 2))
+        ttk.Label(
+            delete_box,
+            text='Permanently removes archived copies only — original live files are never touched.',
+            style='CardInfo.TLabel', wraplength=260, justify='left',
+        ).pack(anchor='w', pady=(0, 6))
+        delete_row = ttk.Frame(delete_box, style='Card.TFrame')
+        delete_row.pack(fill='x')
+        ttk.Button(
+            delete_row, text='Delete eligible…', style='Action.TButton',
+            command=self.confirm_prune_selected,
+        ).pack(side='left', padx=(0, 6), pady=2)
 
         meta = ttk.Frame(detail_inner, style='Card.TFrame')
         meta.pack(fill='both', expand=True)
@@ -2289,13 +2285,12 @@ class StartupManagerGUI(ctk.CTk):
         if ledger_module and custody.get('total'):
             trust = ledger_module.trust_score(custody['verified'], custody['total'])
         if trust is not None:
-            self.hdr_trust_value.configure(text=f'{trust}%')
+            self.hdr_trust_value.configure(text=f'Custody trust {trust}%')
             self.hdr_trust_lbl.configure(
-                text=f'{custody.get("verified", 0):,}/{custody.get("total", 0):,} verified · '
-                     f'{self._format_size(custody.get("bytes_in_custody", 0))} in custody')
+                text=f'· {self._format_size(custody.get("bytes_in_custody", 0))} in custody')
         else:
-            self.hdr_trust_value.configure(text='—')
-            self.hdr_trust_lbl.configure(text='No archive custody yet')
+            self.hdr_trust_value.configure(text='Custody trust —')
+            self.hdr_trust_lbl.configure(text='no archive custody yet')
         self._update_brand_identity()
 
     def _bind_settings_dirty_tracking(self):
@@ -2785,18 +2780,21 @@ class StartupManagerGUI(ctk.CTk):
         tree_wrap.pack(fill='both', expand=True, padx=8, pady=8)
         tree_wrap.grid_rowconfigure(0, weight=1)
         tree_wrap.grid_columnconfigure(0, weight=1)
-        cleanup_cols = ('sel', 'reason', 'size', 'item')
-        self.cleanup_tree = ttk.Treeview(tree_wrap, columns=cleanup_cols, show='headings', selectmode='browse')
+        cleanup_cols = ('sel', 'size', 'reason')
+        self.cleanup_tree = ttk.Treeview(
+            tree_wrap, columns=cleanup_cols, show='tree headings', selectmode='browse')
+        self.cleanup_tree.heading('#0', text='Item')
         self.cleanup_tree.heading('sel', text='✓', command=self._toggle_all_cleanup_selection)
-        self.cleanup_tree.heading('reason', text='Category')
         self.cleanup_tree.heading('size', text='Size')
-        self.cleanup_tree.heading('item', text='Item')
+        self.cleanup_tree.heading('reason', text='Category')
+        self.cleanup_tree.column('#0', width=240, anchor='w', stretch=True, minwidth=120)
         self.cleanup_tree.column('sel', width=36, anchor='center', stretch=False, minwidth=36)
-        self.cleanup_tree.column('reason', width=120, anchor='w', stretch=False, minwidth=80)
         self.cleanup_tree.column('size', width=80, anchor='center', stretch=False, minwidth=60)
-        self.cleanup_tree.column('item', width=280, anchor='w', stretch=True, minwidth=120)
+        self.cleanup_tree.column('reason', width=120, anchor='w', stretch=False, minwidth=80)
         self.cleanup_tree.tag_configure('oddrow', background=CARD_BG)
         self.cleanup_tree.tag_configure('evenrow', background=ROW_ALT)
+        self.cleanup_tree.tag_configure('group', foreground=MUTED)
+        self.cleanup_tree.tag_configure('checked', background=PROOF_SOFT)
         self.cleanup_tree.bind('<Button-1>', self._on_cleanup_click)
         self.cleanup_tree.bind('<Double-Button-1>', self._on_cleanup_double_click)
         self.cleanup_tree.bind('<Button-3>', self._on_cleanup_right_click)
@@ -2925,7 +2923,24 @@ class StartupManagerGUI(ctk.CTk):
             ):
                 btn.config(state='disabled')
             return
-        idx = self.cleanup_tree.index(sel[0])
+        idx = self._cleanup_item_index(sel[0])
+        if idx is None:
+            if self._is_cleanup_group_row(sel[0]):
+                gname = self.cleanup_tree.item(sel[0], 'text') or 'Group'
+                self._cleanup_detail_name.config(text=gname)
+                self._cleanup_detail_path.config(text='')
+                self._cleanup_detail_reason.config(text='')
+                self._cleanup_detail_size.config(text='')
+                self._cleanup_detail_archive.config(text='')
+                self._cleanup_detail_receipt.config(text='')
+                self._cleanup_detail_why.config(
+                    text='Expand the group and select a file to inspect path, reason, and archive destination.')
+            for btn in (
+                self._cleanup_btn_open, self._cleanup_btn_copy,
+                self._cleanup_btn_exclude, self._cleanup_btn_preview,
+            ):
+                btn.config(state='disabled')
+            return
         if idx < 0 or idx >= len(self.cleanup_items):
             return
         item = self.cleanup_items[idx]
@@ -2989,14 +3004,53 @@ class StartupManagerGUI(ctk.CTk):
         name = Path(path).name
         return f'{archive_dir}/{name}'
 
+    def _cleanup_group_for_reason(self, reason):
+        r = reason or 'other'
+        for label, keys in CLEANUP_REASON_GROUPS:
+            if keys is None:
+                return label
+            if r in keys:
+                return label
+        return 'Other'
+
+    def _is_cleanup_group_row(self, row_id):
+        if not row_id:
+            return False
+        return 'group' in self.cleanup_tree.item(row_id, 'tags')
+
+    def _cleanup_item_index(self, row_id):
+        if not row_id or self._is_cleanup_group_row(row_id):
+            return None
+        for tag in self.cleanup_tree.item(row_id, 'tags'):
+            if tag.startswith('idx:'):
+                try:
+                    return int(tag[4:])
+                except ValueError:
+                    pass
+        return None
+
+    def _refresh_cleanup_group_headers(self):
+        for gid in self.cleanup_tree.get_children(''):
+            if not self._is_cleanup_group_row(gid):
+                continue
+            checked_n = 0
+            total_n = 0
+            for row in self.cleanup_tree.get_children(gid):
+                idx = self._cleanup_item_index(row)
+                if idx is None:
+                    continue
+                total_n += 1
+                if idx in self.cleanup_selected:
+                    checked_n += 1
+            label = (self.cleanup_tree.item(gid, 'text') or 'Group').split(' (')[0]
+            self.cleanup_tree.item(gid, text=f'{label} ({total_n})')
+            self.cleanup_tree.set(gid, 'size', f'{checked_n} checked')
+
     def _selected_cleanup_index(self):
         sel = self.cleanup_tree.selection()
         if not sel or not self.cleanup_items:
             return None
-        idx = self.cleanup_tree.index(sel[0])
-        if 0 <= idx < len(self.cleanup_items):
-            return idx
-        return None
+        return self._cleanup_item_index(sel[0])
 
     def _cleanup_open_location(self):
         idx = self._selected_cleanup_index()
@@ -3229,18 +3283,18 @@ class StartupManagerGUI(ctk.CTk):
         self.settings_tab.grid_columnconfigure(0, weight=1)
 
         body = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        body.grid(row=0, column=0, sticky='nsew', padx=10, pady=(8, 4))
+        body.grid(row=0, column=0, sticky='nsew', padx=6, pady=(4, 0))
         body.grid_rowconfigure(2, weight=1)
         body.grid_columnconfigure(0, weight=1)
 
         hdr = ctk_theme.frame(body, BG)
-        hdr.grid(row=0, column=0, sticky='ew', pady=(0, 4))
+        hdr.grid(row=0, column=0, sticky='ew', pady=(0, 2))
         ctk_theme.label(
-            hdr, 'Control Room', text_color=TEXT, font_size=16, weight='bold',
+            hdr, 'Settings', text_color=TEXT, font_size=ctk_theme.TYPE_PAGE, weight='bold',
         ).pack(anchor='w')
         ctk_theme.label(
-            hdr, 'Application preferences, scan paths, archive rules, and tools.',
-            text_color=MUTED, font_size=10,
+            hdr, 'Control Room — application preferences, scan paths, archive rules, and tools.',
+            text_color=MUTED, font_size=ctk_theme.TYPE_MICRO,
         ).pack(anchor='w', pady=(2, 0))
 
         pill_host = ctk_theme.frame(body, BG)
@@ -3566,17 +3620,21 @@ class StartupManagerGUI(ctk.CTk):
                                           highlightthickness=0)
         self.set_whitelist_text.pack(fill='both', expand=True)
 
-        # Footer — persistent save/discard only (section nav is left sidebar)
+        # Footer — docked save/discard bar
         footer = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        footer.grid(row=1, column=0, sticky='ew', padx=10, pady=10)
-        self.save_settings_btn = ttk.Button(footer, text='Save Settings', style='Primary.TButton',
+        footer.grid(row=1, column=0, sticky='ew', padx=6, pady=(6, 8))
+        footer_inner = ctk_theme.frame(footer, HEAD_BG, corner_radius=8)
+        footer_inner.pack(fill='x')
+        btn_row = ttk.Frame(footer_inner, style='Card.TFrame')
+        btn_row.pack(fill='x', padx=12, pady=10)
+        self.save_settings_btn = ttk.Button(btn_row, text='Save Settings', style='Primary.TButton',
                                             command=self.save_settings)
         self.save_settings_btn.pack(side='left')
-        ttk.Button(footer, text='Discard Changes', style='Action.TButton',
+        ttk.Button(btn_row, text='Discard Changes', style='Action.TButton',
                    command=self.load_settings_form).pack(side='left', padx=(8, 0))
-        ttk.Button(footer, text='Open data folder', style='Action.TButton',
+        ttk.Button(btn_row, text='Open data folder', style='Action.TButton',
                    command=self._settings_open_data_dir).pack(side='left', padx=(8, 0))
-        self.settings_status_lbl = ttk.Label(footer, text='', style='Info.TLabel')
+        self.settings_status_lbl = ttk.Label(btn_row, text='', style='Info.TLabel')
         self.settings_status_lbl.pack(side='left', padx=12)
         self._add_tooltip(self.save_settings_btn, 'Write these values to the active cleanup config.')
 
@@ -4564,6 +4622,7 @@ class StartupManagerGUI(ctk.CTk):
         self.bind('<F5>', lambda e: self._refresh_all())
         self.bind('<Control-f>', lambda e: self._focus_search())
         self.bind('<Control-F>', lambda e: self._focus_search())
+        self.bind('<Control-comma>', lambda e: self._open_settings())
         for i in range(8):
             self.bind(f'<Control-Key-{i + 1}>', lambda e, idx=i: self.tab_control.select(idx))
 
@@ -5164,16 +5223,35 @@ class StartupManagerGUI(ctk.CTk):
 
     def _update_cleanup_tree(self):
         self.cleanup_tree.delete(*self.cleanup_tree.get_children())
+        grouped = {label: [] for label, _ in CLEANUP_REASON_GROUPS}
         for idx, item in enumerate(self.cleanup_items):
-            stripe = 'evenrow' if idx % 2 else 'oddrow'
-            reason = item.get('reason') or ''
-            mark = '☑' if idx in self.cleanup_selected else '☐'
-            path = item.get('path') or ''
-            name = Path(path).name if path else '—'
-            self.cleanup_tree.insert('', 'end', values=(mark, reason,
-                                                        self._format_size(item.get('size', 0)),
-                                                        name),
-                                     tags=(stripe, f'reason:{reason}'))
+            gname = self._cleanup_group_for_reason(item.get('reason'))
+            grouped.setdefault(gname, []).append((idx, item))
+
+        row_counter = 0
+        for label, _keys in CLEANUP_REASON_GROUPS:
+            items = grouped.get(label, [])
+            if not items:
+                continue
+            checked_n = sum(1 for idx, _ in items if idx in self.cleanup_selected)
+            gid = self.cleanup_tree.insert(
+                '', 'end', text=f'{label} ({len(items)})',
+                values=('', f'{checked_n} checked', ''), tags=('group',))
+            self.cleanup_tree.item(gid, open=True)
+            for idx, item in items:
+                stripe = 'evenrow' if row_counter % 2 else 'oddrow'
+                row_counter += 1
+                reason = item.get('reason') or ''
+                mark = '☑' if idx in self.cleanup_selected else '☐'
+                path = item.get('path') or ''
+                name = Path(path).name if path else '—'
+                tags = [stripe, f'reason:{reason}', f'idx:{idx}']
+                if idx in self.cleanup_selected:
+                    tags.append('checked')
+                self.cleanup_tree.insert(
+                    gid, 'end', text=name,
+                    values=(mark, self._format_size(item.get('size', 0)), reason),
+                    tags=tuple(tags))
         self._update_cleanup_empty_state()
         self._on_cleanup_select()
 
@@ -5182,8 +5260,19 @@ class StartupManagerGUI(ctk.CTk):
             self.cleanup_selected.discard(idx)
         else:
             self.cleanup_selected.add(idx)
-        row = self.cleanup_tree.get_children()[idx]
-        self.cleanup_tree.set(row, 'sel', '☑' if idx in self.cleanup_selected else '☐')
+        for gid in self.cleanup_tree.get_children(''):
+            for row in self.cleanup_tree.get_children(gid):
+                if f'idx:{idx}' in self.cleanup_tree.item(row, 'tags'):
+                    self.cleanup_tree.set(row, 'sel', '☑' if idx in self.cleanup_selected else '☐')
+                    tags = list(self.cleanup_tree.item(row, 'tags'))
+                    if idx in self.cleanup_selected:
+                        if 'checked' not in tags:
+                            tags.append('checked')
+                    elif 'checked' in tags:
+                        tags.remove('checked')
+                    self.cleanup_tree.item(row, tags=tuple(tags))
+                    break
+        self._refresh_cleanup_group_headers()
         self._update_cleanup_summary(self._cached_cfg())
 
     def _cached_cfg(self):
@@ -5194,19 +5283,23 @@ class StartupManagerGUI(ctk.CTk):
         if region != 'cell':
             return
         row_id = self.cleanup_tree.identify_row(event.y)
-        if not row_id:
+        if not row_id or self._is_cleanup_group_row(row_id):
             return
         col = self.cleanup_tree.identify_column(event.x)
         if col == '#1':
-            self._toggle_cleanup_index(self.cleanup_tree.index(row_id))
+            idx = self._cleanup_item_index(row_id)
+            if idx is not None:
+                self._toggle_cleanup_index(idx)
         self.cleanup_tree.selection_set(row_id)
         self.cleanup_tree.focus(row_id)
         self._on_cleanup_select()
 
     def _on_cleanup_space(self, event):
         sel = self.cleanup_tree.selection()
-        if sel:
-            self._toggle_cleanup_index(self.cleanup_tree.index(sel[0]))
+        if sel and not self._is_cleanup_group_row(sel[0]):
+            idx = self._cleanup_item_index(sel[0])
+            if idx is not None:
+                self._toggle_cleanup_index(idx)
         return 'break'
 
     def _set_cleanup_selection(self, select_all):
@@ -5383,7 +5476,6 @@ class StartupManagerGUI(ctk.CTk):
             self._refresh_header_proof_badges()
 
             rows = [(i, e) for i, e in enumerate(feed) if e.get('kind') != 'restore']
-            kind_labels = {'file': 'File', 'registry': 'Registry', 'prune': 'Pruned'}
 
             def build_row(_j, item):
                 i, e = item
@@ -5395,10 +5487,11 @@ class StartupManagerGUI(ctk.CTk):
                 status = '✓' if e.get('present') else '✗'
                 src = e.get('src') or ''
                 item_name = Path(src).name if src else '—'
+                kind = e.get('kind') or ''
+                event = ACTIVITY_EVENT_LABELS.get(kind, kind.replace('_', ' ').title())
                 return (
                     str(i),
-                    (status, when,
-                     kind_labels.get(e.get('kind'), e.get('kind', '')),
+                    (status, when, event,
                      e.get('reason', ''), item_name,
                      self._format_size(e.get('size', 0))),
                     (stripe, tag),
@@ -6561,92 +6654,69 @@ class StartupManagerGUI(ctk.CTk):
             messagebox.showerror('Export Audit', f'Failed to write audit:\n{e}')
 
     def _show_proof_report(self, log, prf, receipt_path=None, days_bought=None, dup_count=0):
-        """Visual proof screen — replaces the fake '1,247 issues fixed!' popup."""
-        dlg = tk.Toplevel(self)
-        dlg.configure(bg=BG)
-        dlg.title('Cleanroom Proof Report')
-        dlg.geometry('560x480')
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-
-        head_row = ttk.Frame(dlg, style='Content.TFrame')
-        head_row.pack(fill='x', padx=16, pady=(12, 0))
-        logo = self._load_logo(40)
-        if logo is not None:
-            self._proof_logo = logo
-            ttk.Label(head_row, image=logo, background=BG).pack(side='left', padx=(0, 8))
-        title_col = ttk.Frame(head_row, style='Content.TFrame')
-        title_col.pack(side='left', fill='x', expand=True)
-
+        """Visual proof screen — dark modal matching product chrome."""
         c = prf.get('custody') or {}
         ok = c.get('missing', 0) == 0 and c.get('total', 0) > 0
-        head_color = ACCENT if ok else SEVERITY_COLORS['medium']
         head_txt = 'CUSTODY VERIFIED ✓' if ok else 'ARCHIVED WITH PROOF'
 
-        ttk.Label(title_col, text=head_txt, font=('Segoe UI', 16, 'bold'),
-                  foreground=head_color).pack(anchor='w')
-        ttk.Label(title_col, text=brand.APP_MOTTO, style='Info.TLabel').pack(anchor='w', pady=(2, 0))
-        ttk.Label(dlg, text='Measured by Windows — not estimated. Every item is in the archive.',
-                  style='Info.TLabel', wraplength=520).pack(anchor='w', padx=16, pady=(8, 12))
-
-        grid = ttk.Frame(dlg, style='Content.TFrame')
-        grid.pack(fill='both', expand=True, padx=16, pady=(0, 8))
-
-        def _card(parent, title, value, sub=''):
-            f = tk.Frame(parent, bg=CARD_BG, highlightbackground=BORDER, highlightthickness=1)
-            f.pack(side='left', fill='both', expand=True, padx=4, pady=4)
-            tk.Label(f, text=title, bg=CARD_BG, fg=MUTED, font=('Segoe UI', 8, 'bold')).pack(
-                anchor='w', padx=10, pady=(10, 2))
-            tk.Label(f, text=value, bg=CARD_BG, fg=TEXT, font=('Segoe UI', 16, 'bold')).pack(
-                anchor='w', padx=10)
-            if sub:
-                tk.Label(f, text=sub, bg=CARD_BG, fg=MUTED, font=('Segoe UI', 8)).pack(
-                    anchor='w', padx=10, pady=(0, 10))
-
-        row1 = tk.Frame(grid, bg=BG)
-        row1.pack(fill='x')
         moved = sum(int(e.get('size') or 0) for e in log)
-        _card(row1, 'ITEMS ARCHIVED', str(len(log)))
-        _card(row1, 'SPACE MOVED', self._format_size(moved), 'to archive — not deleted')
-
-        row2 = tk.Frame(grid, bg=BG)
-        row2.pack(fill='x', pady=(8, 0))
+        lines = [
+            f'Items archived: {len(log)}',
+            f'Space moved: {self._format_size(moved)} — to archive, not deleted',
+        ]
         if proof_module:
-            before = proof_module._human(prf.get('before_free', 0))
-            after = proof_module._human(prf.get('after_free', 0))
-            delta = proof_module._human(prf.get('measured_delta', 0))
-            _card(row2, 'FREE BEFORE', before)
-            _card(row2, 'FREE AFTER', after)
-            _card(row2, 'OS MEASURED Δ', delta)
-
-        row3 = tk.Frame(grid, bg=BG)
-        row3.pack(fill='x', pady=(8, 0))
-        _card(row3, 'CUSTODY CHECK', f"{c.get('verified', 0)}/{c.get('total', 0)}",
-              'verified on disk right now')
+            lines.extend([
+                f'Free before: {proof_module._human(prf.get("before_free", 0))}',
+                f'Free after: {proof_module._human(prf.get("after_free", 0))}',
+                f'OS measured Δ: {proof_module._human(prf.get("measured_delta", 0))}',
+            ])
+        lines.append(
+            f'Custody check: {c.get("verified", 0)}/{c.get("total", 0)} verified on disk right now')
         if days_bought and days_bought >= 1:
-            _card(row3, 'DISK LIFE BOUGHT', f'~{days_bought:.0f} days', 'from Disk Foresight trend')
+            lines.append(f'Disk life bought: ~{days_bought:.0f} days (Disk Foresight trend)')
         elif dup_count:
-            _card(row3, 'DUPLICATES', str(dup_count), 'separated into archive')
-
-        note = ('Files were MOVED to the archive on the same drive — free space barely '
-                'changes until you prune. That is honest; other cleaners lie about this.')
+            lines.append(f'Duplicates separated: {dup_count}')
         if prf.get('measured_delta', 0) < moved // 2:
-            ttk.Label(dlg, text=note, style='Info.TLabel', wraplength=520).pack(
-                anchor='w', padx=16, pady=(8, 0))
+            lines.append('')
+            lines.append(
+                'Files were moved to the archive on the same drive — free space barely '
+                'changes until you prune. That is honest; other cleaners lie about this.')
 
-        btns = ttk.Frame(dlg, style='Content.TFrame')
-        btns.pack(fill='x', padx=16, pady=12)
+        dlg = CleanroomModal(
+            self, 'Cleanroom Proof Report', width=560, height=460,
+            colors=self._dialog_colors(),
+        )
+        dlg.heading(head_txt, size=17)
+        dlg.subheading(brand.APP_MOTTO)
+        dlg.message('Measured by Windows — not estimated. Every item is in the archive.')
+        dlg.scroll_text('\n'.join(lines), height=200)
+
+        proof_text = '\n'.join(lines)
+
+        def _copy_proof():
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(proof_text)
+                self._set_status('Proof summary copied.')
+            except tk.TclError:
+                pass
+
         if receipt_path:
-            ttk.Button(btns, text='Open Receipt', style='Action.TButton',
-                       command=lambda: self._view_receipt_file(receipt_path)).pack(side='left')
-        ttk.Button(btns, text='View Activity Ledger', style='Action.TButton',
-                   command=lambda: (dlg.destroy(), self.tab_control.select(self.activity_tab),
-                                    self.refresh_activity())).pack(side='left', padx=6)
-        ttk.Button(btns, text='Done', style='Primary.TButton',
-                   command=dlg.destroy).pack(side='right')
-        dlg.bind('<Return>', lambda e: dlg.destroy())
-        self._last_proof_report = dlg  # E2E hook
+            dlg.add_button(
+                'Open Receipt',
+                lambda: self._view_receipt_file(receipt_path),
+                side='left',
+            )
+        dlg.add_button('Open Archive Folder', self.open_archive_folder, side='left')
+        dlg.add_button('Copy Proof', _copy_proof, side='left')
+        dlg.add_button(
+            'View Ledger',
+            lambda: (dlg.close(), self.tab_control.select(self.activity_tab), self.refresh_activity()),
+            side='left',
+        )
+        dlg.add_button('Close', dlg.close, primary=True)
+        dlg.win.bind('<Return>', lambda _e: dlg.close())
+        self._last_proof_report = dlg.win
 
     def open_last_receipt(self):
         if receipts_module is None:
@@ -7283,6 +7353,15 @@ class StartupManagerGUI(ctk.CTk):
             self.recent_proofpack_lbl.configure(text=latest_audit.stem.replace('audit_', ''))
         else:
             self.recent_proofpack_lbl.configure(text='None yet')
+
+    def _open_lights_out(self):
+        """Open official Lights Out companion release — external, not a Cleanroom workflow."""
+        import webbrowser
+        try:
+            webbrowser.open(brand.LIGHTS_OUT_RELEASE_URL)
+            self._set_status('Opening Lights Out companion release…')
+        except Exception as e:
+            messagebox.showerror('Lights Out', f'Unable to open release page:\n{e}')
 
     def open_archive_folder(self):
         cfg = self._load_cleanup_config()

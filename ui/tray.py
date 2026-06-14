@@ -25,20 +25,26 @@ def _resource_path(name):
 def _load_tray_image():
     from PIL import Image
 
-    for rel in (
-        'assets/brand/cleanroom-icon.png',
-        'cleanroom-icon.png',
-    ):
-        path = _resource_path(rel)
+    candidates = (
+        brand.ICON_PNG_PATH,
+        brand.ICON_ICO_PATH,
+        _resource_path('assets/brand/cleanroom-icon.png'),
+        _resource_path('cleanroom-icon.png'),
+        _resource_path('cleanroom-icon.ico'),
+    )
+    for path in candidates:
         if not path.is_file():
-            path = brand.ICON_PNG_PATH if rel.endswith('.png') else brand.ICON_ICO_PATH
-        if path.is_file():
+            continue
+        try:
             img = Image.open(path)
             img = img.convert('RGBA') if img.mode != 'RGBA' else img
-            # Windows notification area reads best at 16–64 px.
             if max(img.size) > 64:
                 img = img.resize((64, 64), Image.LANCZOS)
+            elif max(img.size) < 32:
+                img = img.resize((32, 32), Image.LANCZOS)
             return img
+        except Exception:
+            continue
     return Image.new('RGBA', (64, 64), (34, 197, 94, 255))
 
 
@@ -200,7 +206,13 @@ class TrayController:
         if icon is not None:
             _ensure_icon_running_attr(icon)
             try:
+                icon.visible = False
+            except Exception:
+                pass
+            try:
                 icon.stop()
+            except AttributeError:
+                logger.debug('Tray icon stop — missing _running (patched)', exc_info=True)
             except Exception:
                 logger.debug('Tray icon stop raised', exc_info=True)
             finally:

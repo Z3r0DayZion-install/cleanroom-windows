@@ -38,6 +38,137 @@ def proof_card(
     return card, value
 
 
+def app_shell_header(
+    parent,
+    *,
+    bg: str,
+    bar_bg: str,
+    text: str,
+    muted: str,
+    proof: str,
+    proof_soft: str,
+    head_bg: str,
+    logo_photo=None,
+    on_why,
+    on_settings,
+    on_more,
+) -> dict:
+    """Global app chrome — identity + status chips left; Settings + More right."""
+    bar = ctk_theme.frame(parent, bar_bg, corner_radius=8)
+    bar.pack(fill='x')
+    row = ctk_theme.frame(bar, bar_bg)
+    row.pack(fill='x', padx=10, pady=7)
+
+    left = ctk_theme.frame(row, bar_bg)
+    left.pack(side='left', fill='x', expand=True)
+
+    brand_row = ctk_theme.frame(left, bar_bg)
+    brand_row.pack(side='left')
+    if logo_photo is not None:
+        logo_lbl = tk.Label(brand_row, image=logo_photo, bg=bar_bg)
+        logo_lbl.image = logo_photo
+        logo_lbl.pack(side='left', padx=(0, 6))
+    ctk_theme.label(
+        brand_row, 'Cleanroom', text_color=text, font_size=14, weight='bold',
+    ).pack(side='left')
+
+    custody_frame = ctk_theme.frame(left, bar_bg)
+    custody_frame.pack(side='left', padx=(12, 0))
+    pill = ctk_theme.frame(custody_frame, proof_soft, corner_radius=14)
+    pill.pack(side='left')
+    inner = ctk_theme.frame(pill, proof_soft, corner_radius=14)
+    inner.pack(padx=8, pady=4)
+    trust_value = ctk_theme.label(
+        inner, 'Custody trust —', text_color=proof, font_size=ctk_theme.TYPE_MICRO, weight='bold',
+    )
+    trust_value.pack(side='left')
+    trust_caption = ctk_theme.label(
+        inner, '—', text_color=text, font_size=ctk_theme.TYPE_MICRO,
+    )
+    trust_caption.pack(side='left', padx=(4, 0))
+    why_btn = ctk_theme.button(
+        inner, 'Why?', on_why,
+        fg_color=head_bg, hover_color=bg, text_color=muted,
+        width=42, height=22, corner_radius=10,
+    )
+    why_btn.pack(side='left', padx=(6, 0))
+
+    archive_badge = ctk_theme.frame(left, proof_soft, corner_radius=10)
+    ctk_theme.label(
+        archive_badge, 'Archive-first ON',
+        text_color=proof, font_size=ctk_theme.TYPE_MICRO, weight='bold',
+    ).pack(padx=8, pady=3)
+    archive_badge.pack(side='left', padx=(8, 0))
+
+    right = ctk_theme.frame(row, bar_bg)
+    right.pack(side='right')
+    settings_btn = ctk_theme.button(
+        right, 'Settings', on_settings,
+        fg_color=head_bg, hover_color=proof_soft, text_color=text,
+        height=32, width=88, corner_radius=8,
+    )
+    settings_btn.pack(side='left', padx=(0, 6))
+    more_btn = ctk_theme.button(
+        right, 'More ▾', on_more,
+        fg_color=head_bg, hover_color=proof_soft, text_color=text,
+        height=32, width=72, corner_radius=8,
+    )
+    more_btn.pack(side='left')
+
+    return {
+        'frame': bar,
+        'custody_frame': custody_frame,
+        'trust_value': trust_value,
+        'trust_caption': trust_caption,
+        'why_btn': why_btn,
+        'archive_badge': archive_badge,
+        'settings_btn': settings_btn,
+        'more_btn': more_btn,
+    }
+
+
+def sidebar_compact_brand(
+    parent,
+    *,
+    bg: str,
+    accent: str,
+    text_color: str,
+    muted: str,
+    logo_photo=None,
+    tagline: str = '',
+) -> dict:
+    """Compact sidebar brand row — logo, wordmark, tagline only."""
+    row = ctk_theme.frame(parent, bg)
+    row.pack(fill='x', padx=8, pady=(6, 2))
+    if logo_photo is not None:
+        logo_lbl = tk.Label(row, image=logo_photo, bg=bg)
+        logo_lbl.image = logo_photo
+        logo_lbl.pack(side='left', padx=(0, 6))
+    col = ctk_theme.frame(row, bg)
+    col.pack(side='left', fill='x', expand=True)
+    title_lbl = ctk_theme.label(
+        col, 'Cleanroom', text_color=accent, font_size=13, weight='bold',
+    )
+    title_lbl.pack(anchor='w')
+    tagline_lbl = ctk_theme.label(
+        col, tagline, text_color=muted, font_size=ctk_theme.TYPE_MICRO,
+        wraplength=168, justify='left',
+    )
+    tagline_lbl.pack(anchor='w', pady=(1, 0))
+    status_lbl = ctk_theme.label(
+        col, '', text_color=text_color, font_size=ctk_theme.TYPE_MICRO,
+        wraplength=168, justify='left',
+    )
+    return {
+        'frame': row,
+        'title_lbl': title_lbl,
+        'tagline_lbl': tagline_lbl,
+        'status_lbl': status_lbl,
+        'pill_lbl': None,
+        'pill_frame': None,
+    }
+
+
 def trust_compact_strip(
     parent,
     *,
@@ -158,22 +289,27 @@ class CommandBar:
             border=head_bg, on_accent=on_accent,
         )
 
-    def _show_more(self):
+    def _show_more(self, anchor=None):
         if self._more_popover and self._more_popover.winfo_exists():
             try:
                 self._more_popover.destroy()
             except Exception:
                 pass
-        x = self._more_btn.winfo_rootx()
-        y = self._more_btn.winfo_rooty() + self._more_btn.winfo_height() + 2
+        btn = anchor or self._more_btn
+        x = btn.winfo_rootx()
+        y = btn.winfo_rooty() + btn.winfo_height() + 2
         groups = [
             (section, [(label, cmd) for label, cmd in items])
             for section, items in self._more_groups
         ]
         self._more_popover = show_grouped_popover(
-            self._more_btn.winfo_toplevel(), x, y, groups,
+            btn.winfo_toplevel(), x, y, groups,
             colors=self._popover_colors, width=232,
         )
+
+    def show_more_at(self, anchor):
+        """Open More menu anchored to header or toolbar button."""
+        self._show_more(anchor=anchor)
 
     def set_context(self, tab_idx: int) -> None:
         """Emphasize primary actions for the active page."""
@@ -282,12 +418,12 @@ class ProofDrawer(tk.Frame):
 def settings_card(parent, title: str, *, card_bg: str, accent: str) -> ctk.CTkFrame:
     """Settings section card with heading."""
     box = ctk_theme.frame(parent, card_bg, corner_radius=12)
-    box.pack(fill='x', padx=12, pady=(0, 14))
+    box.pack(fill='x', padx=4, pady=(0, 12))
     ctk_theme.label(
-        box, title, text_color=accent, font_size=15, weight='bold',
-    ).pack(anchor='w', padx=18, pady=(16, 8))
+        box, title, text_color=accent, font_size=ctk_theme.TYPE_SECTION, weight='bold',
+    ).pack(anchor='w', padx=16, pady=(14, 6))
     body = ctk_theme.frame(box, card_bg, corner_radius=12)
-    body.pack(fill='x', padx=18, pady=(0, 16))
+    body.pack(fill='x', padx=16, pady=(0, 14))
     return body
 
 
@@ -409,7 +545,7 @@ class ProofSummaryCard(tk.Frame):
         self._on_copy = on_copy_proof
         self._on_view = on_view_details
 
-        shell = tk.Frame(self, bg=card_bg, highlightbackground=muted, highlightthickness=1)
+        shell = tk.Frame(self, bg=card_bg)
         shell.pack(fill='both', expand=True, padx=4, pady=4)
         inner = tk.Frame(shell, bg=card_bg)
         inner.pack(fill='both', expand=True, padx=14, pady=14)
@@ -656,7 +792,7 @@ def collapsible_section(
     accent_soft = accent_soft or sidebar_bg
     hover_bg = hover_bg or sidebar_bg
     block = ctk_theme.frame(parent, sidebar_bg)
-    block.pack(fill='x', padx=4, pady=(0, 12))
+    block.pack(fill='x', padx=4, pady=(0, 6))
     state = {'open': start_open}
 
     header = ctk_theme.frame(block, sidebar_bg, corner_radius=8)
@@ -674,10 +810,10 @@ def collapsible_section(
         hover_color=hover_bg,
         text_color=muted,
         anchor='w',
-        height=32,
-        font=ctk_theme.font(10, 'bold'),
+        height=28,
+        font=ctk_theme.font(ctk_theme.TYPE_MICRO, 'bold'),
     )
-    toggle.pack(fill='x', padx=10, pady=5)
+    toggle.pack(fill='x', padx=8, pady=3)
 
     def _flip():
         state['open'] = not state['open']
@@ -701,12 +837,20 @@ def sidebar_nav_button(
     accent_soft: str,
     text_color: str,
     hover_color: str = '',
+    active: bool = False,
+    accent: str = '',
+    on_accent: str = '',
 ) -> ctk.CTkButton:
     """Full-width sidebar navigation row."""
+    if active and accent:
+        fg, hover, txt = accent, accent, on_accent or text_color
+    else:
+        fg, hover, txt = 'transparent', hover_color or sidebar_bg, text_color
     return ctk_theme.button(
         parent, label, command,
-        fg_color='transparent',
-        hover_color=hover_color or sidebar_bg,
-        text_color=text_color,
-        anchor='w', height=42, corner_radius=8,
+        fg_color=fg,
+        hover_color=hover,
+        text_color=txt,
+        anchor='w', height=36, corner_radius=8,
+        font=ctk_theme.font(ctk_theme.TYPE_BODY, 'bold' if active else 'normal'),
     )

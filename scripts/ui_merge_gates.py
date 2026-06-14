@@ -56,8 +56,13 @@ TAB_ACTION_CHECKS = (
     )),
 )
 
+HEADER_CHECKS = (
+    ('_hdr_settings_btn', 'Settings'),
+    ('_hdr_more_btn', 'More'),
+)
+
 SIDEBAR_CHECKS = (
-    ('_sidebar_explorer_btn', 'Explorer Context Menus'),
+    ('_sidebar_explorer_btn', 'Explorer Menus'),
 )
 
 HOME_ACTION_CHECKS = (
@@ -166,11 +171,20 @@ def check_layout(app, width: int, height: int, label: str, *, check_settings: bo
     issues.extend(_widget_ok(app.hdr_trust_lbl, f'{label}/Custody Trust label', 40, 12))
     issues.extend(_widget_in_viewport(app.dashboard_primary_btn, app, f'{label}/Scan Now hero'))
 
+    for attr, name in HEADER_CHECKS:
+        widget = getattr(app, attr, None)
+        if widget is None:
+            issues.append(f'{label}/header missing {attr}')
+            continue
+        issues.extend(_widget_ok(widget, f'{label}/header/{name}', 28, 24))
+        issues.extend(_widget_in_viewport(widget, app, f'{label}/header/{name}'))
+
     if not _find_text_in_tree(app, 'Preview'):
         issues.append(f'{label}/proof-flow or Preview Receipt text missing')
     if not _find_text_in_tree(app, 'Archive-first cleanup with receipts'):
         if not _find_text_in_tree(app, 'Archive-first mode is ON'):
-            issues.append(f'{label}/archive-first proof text missing')
+            if not _find_text_in_tree(app, 'Archive-first ON'):
+                issues.append(f'{label}/archive-first proof text missing')
 
     for attr, name in SIDEBAR_CHECKS:
         widget = getattr(app, attr, None)
