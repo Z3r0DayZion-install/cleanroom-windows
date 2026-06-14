@@ -317,6 +317,178 @@ def recent_proof_tile(
     return card, detail
 
 
+def recommendation_card(
+    parent,
+    *,
+    index: int,
+    severity: str,
+    title: str,
+    detail: str,
+    card_bg: str,
+    text_color: str,
+    muted: str,
+    accent: str,
+    border: str,
+    on_select,
+    on_double=None,
+    on_right=None,
+) -> ctk.CTkFrame:
+    """Single recommendation card for Home dashboard (not a table row)."""
+    sev = (severity or 'info').lower()
+    sev_colors = {
+        'high': '#F87171',
+        'medium': '#FBBF24',
+        'low': accent,
+        'info': muted,
+    }
+    badge_color = sev_colors.get(sev, muted)
+
+    card = ctk_theme.frame(parent, card_bg, corner_radius=10, border_color=border, border_width=1)
+    inner = ctk_theme.frame(card, card_bg, corner_radius=10)
+    inner.pack(fill='x', padx=12, pady=10)
+
+    top = ctk_theme.frame(inner, card_bg)
+    top.pack(fill='x')
+    ctk_theme.label(
+        top, sev.upper(), text_color=badge_color, font_size=8, weight='bold',
+    ).pack(side='left')
+    ctk_theme.label(
+        top, title, text_color=text_color, font_size=12, weight='bold',
+        wraplength=420, justify='left',
+    ).pack(side='left', padx=(8, 0), fill='x', expand=True)
+
+    ctk_theme.label(
+        inner, detail, text_color=muted, font_size=10,
+        wraplength=460, justify='left',
+    ).pack(anchor='w', pady=(6, 0))
+
+    def _bind(widget):
+        widget.bind('<Button-1>', lambda e, i=index: on_select(i))
+        if on_double:
+            widget.bind('<Double-Button-1>', lambda e, i=index: on_double(i))
+        if on_right:
+            widget.bind('<Button-3>', lambda e, i=index: on_right(e, i))
+
+    for w in (card, inner, top):
+        _bind(w)
+    for child in inner.winfo_children():
+        try:
+            _bind(child)
+            for sub in child.winfo_children():
+                _bind(sub)
+        except Exception:
+            pass
+    return card
+
+
+class ProofSummaryCard(tk.Frame):
+    """Dark proof summary panel — no white receipt preview on the dashboard."""
+
+    def __init__(
+        self,
+        master,
+        *,
+        panel_bg: str,
+        card_bg: str,
+        accent: str,
+        proof: str,
+        text_color: str,
+        muted: str,
+        on_open_receipt=None,
+        on_copy_proof=None,
+        on_view_details=None,
+    ):
+        super().__init__(master, bg=panel_bg)
+        self._panel_bg = panel_bg
+        self._card_bg = card_bg
+        self._accent = accent
+        self._proof = proof
+        self._text = text_color
+        self._muted = muted
+        self._on_open = on_open_receipt
+        self._on_copy = on_copy_proof
+        self._on_view = on_view_details
+
+        shell = tk.Frame(self, bg=card_bg, highlightbackground=muted, highlightthickness=1)
+        shell.pack(fill='both', expand=True, padx=4, pady=4)
+        inner = tk.Frame(shell, bg=card_bg)
+        inner.pack(fill='both', expand=True, padx=14, pady=14)
+
+        tk.Label(
+            inner, text='Proof summary', bg=card_bg, fg=muted,
+            font=('Segoe UI', 9, 'bold'),
+        ).pack(anchor='w')
+        self._title_lbl = tk.Label(
+            inner, text='Select a recommendation', bg=card_bg, fg=text_color,
+            font=('Segoe UI', 13, 'bold'), wraplength=260, justify='left',
+        )
+        self._title_lbl.pack(anchor='w', pady=(8, 4))
+        self._badge_lbl = tk.Label(
+            inner, text='—', bg=card_bg, fg=proof,
+            font=('Segoe UI', 9, 'bold'),
+        )
+        self._badge_lbl.pack(anchor='w')
+        self._summary_lbl = tk.Label(
+            inner, text='Choose a recommendation to see guidance and next steps.',
+            bg=card_bg, fg=muted, font=('Segoe UI', 10),
+            wraplength=260, justify='left',
+        )
+        self._summary_lbl.pack(anchor='w', pady=(8, 12))
+
+        btns = tk.Frame(inner, bg=card_bg)
+        btns.pack(fill='x', side='bottom')
+        self._btn_open = tk.Button(
+            btns, text='Open Receipt', command=self._open_receipt,
+            bg=accent, fg=text_color, relief='flat', padx=8, pady=4,
+            font=('Segoe UI', 9), cursor='hand2',
+        )
+        self._btn_open.pack(side='left')
+        self._btn_copy = tk.Button(
+            btns, text='Copy Proof', command=self._copy_proof,
+            bg=panel_bg, fg=text_color, relief='flat', padx=8, pady=4,
+            font=('Segoe UI', 9), cursor='hand2',
+        )
+        self._btn_copy.pack(side='left', padx=(6, 0))
+        self._btn_view = tk.Button(
+            btns, text='View Details', command=self._view_details,
+            bg=panel_bg, fg=text_color, relief='flat', padx=8, pady=4,
+            font=('Segoe UI', 9), cursor='hand2',
+        )
+        self._btn_view.pack(side='left', padx=(6, 0))
+
+    def _open_receipt(self):
+        if self._on_open:
+            self._on_open()
+
+    def _copy_proof(self):
+        if self._on_copy:
+            self._on_copy()
+
+    def _view_details(self):
+        if self._on_view:
+            self._on_view()
+
+    def show_idle(self, message: str = 'Choose a recommendation to see guidance and next steps.'):
+        self._title_lbl.config(text='Select a recommendation')
+        self._badge_lbl.config(text='GUIDANCE', fg=self._muted)
+        self._summary_lbl.config(text=message)
+        for btn in (self._btn_open, self._btn_copy, self._btn_view):
+            btn.config(state='disabled')
+
+    def show_recommendation(self, rec: dict):
+        sev = (rec.get('severity') or 'info').upper()
+        title = rec.get('title') or '—'
+        detail = rec.get('detail') or '—'
+        self._title_lbl.config(text=title)
+        self._badge_lbl.config(
+            text=sev,
+            fg=self._proof if sev != 'INFO' else self._muted,
+        )
+        self._summary_lbl.config(text=detail)
+        for btn in (self._btn_open, self._btn_copy, self._btn_view):
+            btn.config(state='normal')
+
+
 def settings_section_nav(parent, labels: list[str], *, sidebar_bg: str, accent: str, muted: str, on_select):
     """Horizontal segmented settings nav (legacy); prefer settings_sidebar_nav."""
     row = ctk_theme.frame(parent, sidebar_bg)

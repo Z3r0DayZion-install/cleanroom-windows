@@ -22,12 +22,23 @@ from ui.receipt_animation import (
     PROOF_PACK_LINES,
     play_receipt_animation,
 )
+from ui.page_state import (
+    EMPTY_DONE,
+    ERROR,
+    IDLE_READY,
+    LOADING,
+    RECEIPT_READY,
+    RESULTS_READY,
+    cleaner_page_state,
+    home_page_state,
+)
 from ui.proof_dashboard import (
     CommandBar,
-    ProofDrawer,
+    ProofSummaryCard,
     brand_identity_block,
     collapsible_section,
     recent_proof_tile,
+    recommendation_card,
     settings_card,
     settings_sidebar_nav,
     sidebar_nav_button,
@@ -386,6 +397,10 @@ class StartupManagerGUI(ctk.CTk):
         self._initial_tab = initial_tab
         self._tab_loaded = {0}
         self._scan_session_done = False
+        self._cleaner_loading = False
+        self._cleaner_error = ''
+        self._selected_rec_idx = None
+        self._sidebar_collapsed = bool(load_ui_prefs().get('sidebar_collapsed', False))
         self._cached_scan_count = 0
         self._cached_scan_size = 0
         self._cached_scan_at = ''
@@ -476,6 +491,8 @@ class StartupManagerGUI(ctk.CTk):
         self._refresh_header_proof_badges()
         self.refresh_dashboard()
         self._set_status('Ready. Click Scan to review cleanup candidates.')
+        self._sync_cleaner_state()
+        self._sync_home_state()
         self._update_context_panel()
         if not animations_disabled():
             self._fade_in_window()
@@ -484,6 +501,7 @@ class StartupManagerGUI(ctk.CTk):
         self._apply_initial_tab()
         if hasattr(self, '_shell_pane'):
             self._bind_pane(self._shell_pane, 'shell_sidebar', default=248)
+        self._apply_sidebar_collapsed()
         self._update_page_chrome()
         self._update_brand_identity()
         self.after(250, self._post_paint_launch_tasks)
@@ -563,6 +581,137 @@ class StartupManagerGUI(ctk.CTk):
             text_color='#FCA5A5', font_size=9, wraplength=900, justify='left',
         ).pack(anchor='w', padx=12, pady=8)
         logger.warning('Tray unavailable: %s', msg)
+
+    def _is_cleaner_scanning(self) -> bool:
+        return bool(getattr(self, '_cleaner_loading', False))
+
+    def _sync_cleaner_state(self):
+        """Single source of truth for Cleaner hero, footer, and empty layout."""
+        state, hero, sub, footer = cleaner_page_state(
+            loading=self._cleaner_loading,
+            error=self._cleaner_error,
+            count=len(self.cleanup_items or []),
+            checked=len(self.cleanup_selected or set()),
+            scan_done=getattr(self, '_scan_session_done', False),
+        )
+        self._cleaner_page_state = state
+        if hasattr(self, 'cleanup_status_hero'):
+            if state == ERROR:
+                tone = SEVERITY_COLORS.get('high', ACCENT)
+            elif state in (LOADING, RECEIPT_READY, IDLE_READY):
+                tone = ACCENT
+            elif state == EMPTY_DONE:
+                tone = PROOF
+            else:
+                tone = TEXT
+            self.cleanup_status_hero.config(text=hero, fg=tone)
+            self.cleanup_msg_hero.config(text=sub)
+        if hasattr(self, 'cleanup_status_lbl'):
+            self.cleanup_status_lbl.config(text=footer)
+        try:
+            on_cleaner = self.tab_control.index('current') == 3
+        except Exception:
+            on_cleaner = False
+        if on_cleaner:
+            self._set_status(footer)
+        if hasattr(self, 'apply_clean_btn'):
+            self.apply_clean_btn.configure(
+                style='Primary.TButton' if state == RECEIPT_READY else 'Action.TButton')
+        count = len(self.cleanup_items or [])
+        show_actions = count > 0 and state != LOADING
+        for attr in ('cleaner_preview_btn', 'apply_clean_btn'):
+            if hasattr(self, attr):
+                getattr(self, attr).config(state='normal' if show_actions else 'disabled')
+        scanning = state == LOADING
+        for attr in ('scan_btn', 'dashboard_primary_btn'):
+            if hasattr(self, attr):
+                getattr(self, attr).config(state='disabled' if scanning else 'normal')
+        if hasattr(self, 'tb_scan'):
+            self.tb_scan.configure(state='disabled' if scanning else 'normal')
+        if hasattr(self, '_update_cleanup_empty_state'):
+            self._update_cleanup_empty_state()
+        self._update_brand_identity()
+
+    def _sync_home_state(self, *, custody_missing: int = 0):
+        """Align Home hero with the same scan lifecycle as Cleaner."""
+        state, hero, sub, status = home_page_state(
+            loading=self._cleaner_loading,
+            error=self._cleaner_error,
+            count=len(self.cleanup_items or []),
+            checked=len(self.cleanup_selected or set()),
+            scan_done=getattr(self, '_scan_session_done', False),
+            custody_missing=custody_missing,
+        )
+        self._home_page_state = state
+        if state == ERROR:
+            tone = SEVERITY_COLORS.get('high', ACCENT)
+        elif state in (LOADING, RECEIPT_READY):
+            tone = ACCENT
+        elif state == EMPTY_DONE:
+            tone = PROOF
+        elif custody_missing:
+            tone = SEVERITY_COLORS.get('high', ACCENT)
+        else:
+            tone = ACCENT if state == IDLE_READY else TEXT
+        if hasattr(self, 'dashboard_status_lbl'):
+            self.dashboard_status_lbl.config(text=hero, fg=tone)
+        if hasattr(self, 'dashboard_msg_lbl'):
+            self.dashboard_msg_lbl.config(text=sub)
+        try:
+            on_home = self.tab_control.index('current') == 0
+        except Exception:
+            on_home = False
+        if on_home and not self._cleaner_loading:
+            self._set_status(status)
+        if state == RECEIPT_READY and hasattr(self, 'dashboard_primary_btn'):
+            self.dashboard_primary_btn.configure(
+                text='Preview Receipt', command=self.preview_cleanup_receipt)
+            self.dashboard_secondary_btn.configure(
+                text='Open Cleaner', command=lambda: self._navigate_to_tab(3))
+        elif state == RESULTS_READY and hasattr(self, 'dashboard_primary_btn'):
+            self.dashboard_primary_btn.configure(
+                text='Open Cleaner', command=lambda: self._navigate_to_tab(3))
+            self.dashboard_secondary_btn.configure(
+                text='Preview Receipt', command=self.preview_cleanup_receipt)
+        elif state == EMPTY_DONE and hasattr(self, 'dashboard_primary_btn'):
+            self.dashboard_primary_btn.configure(
+                text='Scan Again', command=self.refresh_cleanup)
+            self.dashboard_secondary_btn.configure(
+                text='Open Activity', command=lambda: self._navigate_to_tab(1))
+        elif custody_missing and hasattr(self, 'dashboard_primary_btn'):
+            self.dashboard_primary_btn.configure(
+                text='Review custody', command=lambda: self._navigate_to_tab(1))
+            self.dashboard_secondary_btn.configure(
+                text='Open Archive', command=lambda: self._navigate_to_tab(6))
+        elif hasattr(self, 'dashboard_primary_btn'):
+            self.dashboard_primary_btn.configure(
+                text='Scan Now', command=self.refresh_cleanup)
+            self.dashboard_secondary_btn.configure(
+                text='Open Activity', command=lambda: self._navigate_to_tab(1))
+        self.preview_receipt_btn = getattr(self, 'dashboard_primary_btn', None)
+
+    def _toggle_sidebar_collapsed(self):
+        self._sidebar_collapsed = not self._sidebar_collapsed
+        prefs = load_ui_prefs()
+        prefs['sidebar_collapsed'] = self._sidebar_collapsed
+        save_ui_prefs(prefs)
+        self._apply_sidebar_collapsed()
+
+    def _apply_sidebar_collapsed(self):
+        collapsed = getattr(self, '_sidebar_collapsed', False)
+        if hasattr(self, '_sidebar_identity'):
+            self._sidebar_identity.grid() if not collapsed else self._sidebar_identity.grid_remove()
+        if hasattr(self, '_sidebar_collapse_btn'):
+            self._sidebar_collapse_btn.configure(text='»' if collapsed else '«')
+        if hasattr(self, '_shell_pane'):
+            try:
+                if collapsed:
+                    self._shell_pane.sashpos(0, 56)
+                else:
+                    saved = self._pane_pref('shell_sidebar', 248)
+                    self._shell_pane.sashpos(0, int(saved or 248))
+            except Exception:
+                pass
 
     def _init_tray(self):
         try:
@@ -682,8 +831,6 @@ class StartupManagerGUI(ctk.CTk):
         tree_rows = max(5, min(12, (h - 420) // 28))
         if hasattr(self, 'cleanup_tree'):
             self.cleanup_tree.column('item', width=max(160, min(520, w - 380)))
-        if hasattr(self, 'rec_tree'):
-            self.rec_tree.configure(height=tree_rows)
         if hasattr(self, 'archive_tree'):
             self.archive_tree.configure(height=tree_rows)
         detail_w = max(200, min(420, int(w * 0.30)))
@@ -1093,11 +1240,18 @@ class StartupManagerGUI(ctk.CTk):
                        'use Enable/Disable below or copy the command.')
         elif tab_idx == 3:
             count = len(getattr(self, 'cleanup_items', []) or [])
-            checked = len(getattr(self, 'cleanup_selected', set()) or [])
-            subtitle = f'{count} candidates · {checked} checked'
-            if count == 0:
-                nxt = 'No candidates yet — try Settings → Relaxed scan, then Scan Now.'
+            checked = len(getattr(self, 'cleanup_selected', set()) or set())
+            if self._cleaner_loading:
+                subtitle = 'Scanning configured folders…'
+                nxt = 'Wait for scan to finish before previewing or archiving.'
+            elif count == 0 and getattr(self, '_scan_session_done', False):
+                subtitle = 'Scan complete — no candidates found'
+                nxt = 'Try Settings → Relaxed scan, then Scan Now.'
+            elif count == 0:
+                subtitle = 'Ready to scan'
+                nxt = 'Run Scan Now to review configured folders.'
             else:
+                subtitle = f'{count} candidates · {checked} checked'
                 nxt = f'{checked} item(s) ready — Preview Receipt, then Archive & Clean.'
         elif tab_idx == 4:
             entry = self._selected_program() if hasattr(self, 'uninstall_tree') else None
@@ -1208,10 +1362,14 @@ class StartupManagerGUI(ctk.CTk):
                       if visible else 'Programs that launch with Windows')
         elif tab_idx == 3:
             title = 'Cleaner'
-            if count:
+            if self._cleaner_loading:
+                status = 'Scanning configured folders…'
+            elif count:
                 status = f'{count:,} candidates · {checked} checked for archive'
+            elif getattr(self, '_scan_session_done', False):
+                status = 'Scan complete — no candidates found'
             else:
-                status = 'Scan folders, then preview receipt before cleanup'
+                status = 'Ready to scan'
         elif tab_idx == 4:
             title = 'Uninstaller'
             n = len(self.uninstall_tree.get_children()) if hasattr(self, 'uninstall_tree') else 0
@@ -1308,8 +1466,6 @@ class StartupManagerGUI(ctk.CTk):
     def _build_sidebar(self, parent):
         sidebar = ctk_theme.frame(parent, SIDEBAR_BG, corner_radius=10)
         sidebar.pack(fill='both', expand=True)
-        sidebar.configure(width=248)
-        sidebar.pack_propagate(False)
         sidebar.grid_rowconfigure(1, weight=1)
         sidebar.grid_columnconfigure(0, weight=1)
 
@@ -1327,6 +1483,7 @@ class StartupManagerGUI(ctk.CTk):
             default_pill=brand.APP_LOCKUP_PILL,
         )
         identity['frame'].grid(row=0, column=0, sticky='ew', padx=4, pady=(4, 0))
+        self._sidebar_identity = identity['frame']
         self._brand_title_lbl = identity['title_lbl']
         self._brand_tagline_lbl = identity['tagline_lbl']
         self._brand_status_lbl = identity['status_lbl']
@@ -1407,8 +1564,16 @@ class StartupManagerGUI(ctk.CTk):
 
         footer = ctk_theme.frame(sidebar, SIDEBAR_BG)
         footer.grid(row=2, column=0, sticky='ew', padx=10, pady=(4, 10))
-        ctk_theme.label(footer, 'F5 refresh · Ctrl+F search · Ctrl+1–8 tabs',
-                        text_color=MUTED, font_size=9).pack(anchor='w')
+        foot_row = ctk_theme.frame(footer, SIDEBAR_BG)
+        foot_row.pack(fill='x')
+        self._sidebar_collapse_btn = ctk_theme.button(
+            foot_row, '«', self._toggle_sidebar_collapsed,
+            fg_color=HEAD_BG, hover_color=ACCENT_SOFT, text_color=TEXT,
+            width=28, height=22,
+        )
+        self._sidebar_collapse_btn.pack(side='right')
+        ctk_theme.label(foot_row, 'F5 · Ctrl+F · Ctrl+1–8',
+                        text_color=MUTED, font_size=9).pack(side='left', anchor='w')
 
     def _expand_sidebar_tools(self):
         """Expand Tools group so advanced utilities are reachable (layout gates, deep links)."""
@@ -1442,12 +1607,12 @@ class StartupManagerGUI(ctk.CTk):
         save_ui_prefs(prefs)
         self._update_context_panel()
         self._update_page_chrome(current)
-        if current == 3 and hasattr(self, '_update_cleanup_empty_state'):
-            self._update_cleanup_empty_state()
+        if current == 3 and hasattr(self, '_sync_cleaner_state'):
+            self._sync_cleaner_state()
         self._lazy_load_tab(current)
 
     def _update_page_chrome(self, tab_idx=None):
-        """Home shows the full proof dashboard; other tabs use a compact workspace header."""
+        """Adaptive header — minimal chrome on workspace pages."""
         if tab_idx is None:
             try:
                 tab_idx = self.tab_control.index('current')
@@ -1455,18 +1620,26 @@ class StartupManagerGUI(ctk.CTk):
                 tab_idx = 0
         dashboard = tab_idx == 0
         self._page_is_dashboard = dashboard
+        show_trust = tab_idx in (0, 3, 6)
+        show_archive = tab_idx in (0, 3)
         try:
             if hasattr(self, '_hdr_summary'):
                 self._hdr_summary.pack_forget()
             if hasattr(self, '_hdr_compact'):
-                self._hdr_compact.pack(fill='x', pady=(4, 0))
+                if show_trust:
+                    self._hdr_compact.pack(fill='x', pady=(2, 0))
+                else:
+                    self._hdr_compact.pack_forget()
             if hasattr(self, '_archive_banner'):
-                self._archive_banner.pack_forget()
+                if show_archive:
+                    self._archive_banner.pack(fill='x', pady=(2, 0))
+                else:
+                    self._archive_banner.pack_forget()
             if hasattr(self, '_context_bar'):
                 if dashboard:
                     self._context_bar.pack_forget()
                 else:
-                    self._context_bar.pack(fill='x', padx=14, pady=(0, 8))
+                    self._context_bar.pack(fill='x', padx=14, pady=(0, 6))
         except Exception:
             pass
         self._update_brand_identity(tab_idx)
@@ -1480,19 +1653,19 @@ class StartupManagerGUI(ctk.CTk):
         self.optimizer_tab.grid_columnconfigure(0, weight=1)
 
         hero = ctk_theme.frame(self.optimizer_tab, CARD_BG, corner_radius=12)
-        hero.grid(row=0, column=0, sticky='ew', padx=10, pady=(8, 6))
+        hero.grid(row=0, column=0, sticky='ew', padx=10, pady=(6, 4))
         hero_inner = ttk.Frame(hero, style='Card.TFrame')
-        hero_inner.pack(fill='x', padx=16, pady=14)
+        hero_inner.pack(fill='x', padx=14, pady=10)
         self.dashboard_status_lbl = tk.Label(
             hero_inner, text='Ready to scan', bg=CARD_BG, fg=PROOF,
-            font=('Segoe UI', 22, 'bold'))
+            font=('Segoe UI', 18, 'bold'))
         self.dashboard_status_lbl.pack(anchor='w', pady=(0, 2))
         self.dashboard_msg_lbl = ttk.Label(
             hero_inner,
             text='Archive-first cleanup with receipts.',
             style='Info.TLabel', wraplength=760,
         )
-        self.dashboard_msg_lbl.pack(anchor='w', pady=(0, 10))
+        self.dashboard_msg_lbl.pack(anchor='w', pady=(0, 8))
         cta_row = ttk.Frame(hero_inner, style='Card.TFrame')
         cta_row.pack(anchor='w')
         self.dashboard_primary_btn = ttk.Button(
@@ -1509,7 +1682,7 @@ class StartupManagerGUI(ctk.CTk):
         self.preview_receipt_btn = self.dashboard_primary_btn
 
         cards = ttk.Frame(self.optimizer_tab, style='Content.TFrame')
-        cards.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 6))
+        cards.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 4))
         self._home_cards = cards
         for col in range(4):
             cards.grid_columnconfigure(col, weight=1)
@@ -1591,61 +1764,31 @@ class StartupManagerGUI(ctk.CTk):
         self._home_rec_pane, rec_left, rec_right = create_horizontal_pane(rec_body)
         self._bind_pane(self._home_rec_pane, 'home_rec_split', default=480)
 
-        rec_left.grid_rowconfigure(0, weight=1)
-        rec_left.grid_columnconfigure(0, weight=1)
-        self.rec_tree = ttk.Treeview(rec_left, columns=('severity', 'title', 'detail'),
-                                     show='headings', selectmode='browse', height=8)
-        self.rec_tree.heading('severity', text='Priority')
-        self.rec_tree.heading('title', text='Recommendation')
-        self.rec_tree.heading('detail', text='Why it matters')
-        self.rec_tree.column('severity', width=80, anchor='center', stretch=False)
-        self.rec_tree.column('title', width=200, anchor='w', stretch=True)
-        self.rec_tree.column('detail', width=280, anchor='w', stretch=True)
-        rec_scroll = ttk.Scrollbar(rec_left, orient='vertical', command=self.rec_tree.yview)
-        self.rec_tree.configure(yscrollcommand=rec_scroll.set)
-        self.rec_tree.grid(row=0, column=0, sticky='nsew')
-        rec_scroll.grid(row=0, column=1, sticky='ns')
-        self.receipt_printer = ProofDrawer(
+        self._rec_cards_scroll = ctk.CTkScrollableFrame(
+            rec_left, fg_color=CARD_BG, corner_radius=8,
+            scrollbar_button_color=BORDER, scrollbar_button_hover_color=HEAD_BG,
+        )
+        self._rec_cards_scroll.pack(fill='both', expand=True, padx=4, pady=4)
+
+        self._proof_summary = ProofSummaryCard(
             rec_right,
-            panel_bg=CARD_BG,
-            paper_bg='#E8EDF4',
+            panel_bg=BG,
+            card_bg=CARD_BG,
             accent=ACCENT,
-            text_color='#1F2937',
+            proof=PROOF,
+            text_color=TEXT,
             muted=MUTED,
-            border=BORDER,
-            width=240,
-            height=200,
+            on_open_receipt=self.open_last_receipt,
+            on_copy_proof=self._recommendation_copy_details,
+            on_view_details=self._recommendation_primary_action,
         )
-        self.receipt_printer.pack(fill='both', expand=True, padx=(4, 0))
-        self.receipt_printer.show_idle('Select a recommendation to view proof details.')
-        rec_actions = ttk.Frame(rec_left, style='Card.TFrame')
-        rec_actions.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(6, 0))
-        self._rec_btn_primary = ttk.Button(rec_actions, text='Take action', style='Primary.TButton',
-                                           command=self._recommendation_primary_action)
-        self._rec_btn_primary.pack(side='left')
-        self._rec_btn_copy = ttk.Button(rec_actions, text='Copy details', style='Action.TButton',
-                                        command=self._recommendation_copy_details)
-        self._rec_btn_copy.pack(side='left', padx=(8, 0))
-        self._rec_status_lbl = ttk.Label(rec_actions, text='Read-only guidance — select a row.',
-                                         style='Info.TLabel')
-        self._rec_status_lbl.pack(side='left', padx=(12, 0))
+        self._proof_summary.pack(fill='both', expand=True, padx=(4, 0))
+        self._proof_summary.show_idle()
+
+        self._rec_card_frames = []
         self._dashboard_recommendations = []
-        for sev, color in SEVERITY_COLORS.items():
-            fg = color if sev == 'high' else (MUTED if sev == 'info' else TEXT)
-            self.rec_tree.tag_configure(sev, foreground=fg)
-        self.rec_tree.tag_configure('oddrow', background=CARD_BG)
-        self.rec_tree.tag_configure('evenrow', background=ROW_ALT)
-        self._bind_selectable_table(
-            self.rec_tree,
-            on_select=self._on_recommendation_select,
-            on_double=self._on_recommendation_double_click,
-            on_right=self._on_recommendation_right_click,
-        )
         self._rec_context_menu = None
-        self.rec_empty_hint = self._make_empty_hint(
-            self.rec_tree,
-            'No recommendations yet.\n\nRun Scan to review configured folders.\n'
-            'Cleanroom surfaces archive-first guidance with receipts.')
+
         self._home_rec_empty_panel = ctk_theme.frame(rec_body, CARD_BG, corner_radius=12)
         empty_inner = ttk.Frame(self._home_rec_empty_panel, style='Card.TFrame')
         empty_inner.place(relx=0.5, rely=0.42, anchor='center')
@@ -2782,33 +2925,52 @@ class StartupManagerGUI(ctk.CTk):
         self.preview_cleanup_receipt()
 
     def _update_cleaner_hero(self):
-        if not hasattr(self, 'cleanup_status_hero'):
+        self._sync_cleaner_state()
+
+    def _populate_recommendation_cards(self, recs):
+        if not hasattr(self, '_rec_cards_scroll'):
             return
-        count = len(self.cleanup_items or [])
-        checked = len(self.cleanup_selected or set())
-        if hasattr(self, 'cleanup_progress') and str(self.cleanup_progress.cget('mode')):
+        for child in self._rec_cards_scroll.winfo_children():
+            child.destroy()
+        self._rec_card_frames = []
+        for i, r in enumerate(recs):
+            card = recommendation_card(
+                self._rec_cards_scroll,
+                index=i,
+                severity=r.get('severity', 'info'),
+                title=r.get('title', ''),
+                detail=r.get('detail', ''),
+                card_bg=CARD_BG,
+                text_color=TEXT,
+                muted=MUTED,
+                accent=ACCENT,
+                border=BORDER,
+                on_select=self._select_recommendation_card,
+                on_double=lambda idx: self._recommendation_primary_action(),
+                on_right=self._on_recommendation_card_right,
+            )
+            card.pack(fill='x', pady=(0, 8), padx=2)
+            self._rec_card_frames.append(card)
+
+    def _select_recommendation_card(self, index: int):
+        self._selected_rec_idx = index
+        for i, card in enumerate(self._rec_card_frames):
             try:
-                if self.cleanup_progress.winfo_ismapped():
-                    self.cleanup_status_hero.config(text='Scanning…', fg=ACCENT)
-                    self.cleanup_msg_hero.config(text='Reviewing configured folders for candidates.')
-                    return
+                card.configure(border_color=ACCENT if i == index else BORDER)
             except Exception:
                 pass
-        if count and checked:
-            self.cleanup_status_hero.config(text='Receipt ready', fg=ACCENT)
-            self.cleanup_msg_hero.config(
-                text=f'{count} candidate(s) · {checked} checked · preview receipt before archive.')
-            self.apply_clean_btn.configure(style='Primary.TButton')
-        elif count:
-            self.cleanup_status_hero.config(text='Candidates found', fg=TEXT)
-            self.cleanup_msg_hero.config(
-                text=f'{count} candidate(s) — check items, then preview receipt.')
-            self.apply_clean_btn.configure(style='Action.TButton')
-        else:
-            self.cleanup_status_hero.config(text='Ready to scan', fg=ACCENT)
-            self.cleanup_msg_hero.config(
-                text='Scan configured folders — preview receipt before any archive.')
-            self.apply_clean_btn.configure(style='Action.TButton')
+        self._on_recommendation_select()
+
+    def _on_recommendation_card_right(self, event, index: int):
+        self._select_recommendation_card(index)
+        self._ensure_rec_context_menu()
+        has = self._selected_recommendation() is not None
+        for idx, enabled in ((0, has), (1, has), (3, True), (4, True), (5, True)):
+            self._menu_entry_state(self._rec_context_menu, idx, enabled)
+        try:
+            self._rec_context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._rec_context_menu.grab_release()
 
     def _build_restore_tab(self):
         header = ttk.Frame(self.restore_tab, style='Content.TFrame')
@@ -4831,41 +4993,38 @@ class StartupManagerGUI(ctk.CTk):
         if cfg is None:
             return
 
-        self.scan_btn.config(state='disabled')
-        self.tb_scan.configure(state='disabled')
-        self._brand_phase = None
-        if hasattr(self, 'dashboard_primary_btn'):
-            self.dashboard_primary_btn.config(state='disabled')
-        self.cleanup_status_lbl.config(text='Scanning...')
-        self._update_cleaner_hero()
-        self._set_status('Scanning configured folders for cleanup candidates...')
-        self.cleanup_progress.pack(side='left', padx=12)
+        self._cleaner_loading = True
+        self._cleaner_error = ''
+        self.tb_preview.configure(state='disabled')
+        self.tb_apply.configure(state='disabled')
+        self.cleanup_progress.pack(side='right')
         self.cleanup_progress.start(12)
+        self._sync_cleaner_state()
+        self._sync_home_state()
 
         def done(items, err):
+            self._cleaner_loading = False
             self.cleanup_progress.stop()
             self.cleanup_progress.pack_forget()
-            self.scan_btn.config(state='normal')
-            self.tb_scan.configure(state='normal')
-            if hasattr(self, 'dashboard_primary_btn'):
-                self.dashboard_primary_btn.config(state='normal')
+            self.tb_preview.configure(state='normal')
+            self.tb_apply.configure(state='normal')
             if err is not None:
-                self.cleanup_status_lbl.config(text=f'Scan failed: {err}')
-                self._set_status('Scan failed.')
+                self._cleaner_error = str(err)
+                self._sync_cleaner_state()
+                self._sync_home_state()
+                self._update_context_panel()
                 return
             self.cleanup_items = items
-            self.cleanup_selected = set(range(len(items)))  # everything checked by default
+            self.cleanup_selected = set(range(len(items)))
             self.cleanup_total_size = sum(item.get('size', 0) for item in items)
             self._last_cfg = cfg
             self._update_cleanup_summary(cfg)
             self._update_cleanup_tree()
             self._scan_session_done = True
             self._save_scan_cache()
+            self._sync_cleaner_state()
             self.refresh_dashboard()
-            self.cleanup_status_lbl.config(text=f'Found {len(items)} candidate(s) across configured paths.')
-            self._set_status(f'Scan complete — {len(items)} candidate(s).', pulse=True)
             self._update_context_panel()
-            self._set_status(f'Scan complete: {len(items)} candidate(s), {self._format_size(self.cleanup_total_size)} reclaimable.')
 
         self._run_bg(lambda: cleanup_main.scan_candidates(cfg), done)
 
@@ -4892,7 +5051,7 @@ class StartupManagerGUI(ctk.CTk):
         self._refresh_header_proof_badges()
         archive = (cfg or {}).get('archive_dir') if cfg else None
         self.cleanup_archive_label.config(text=f'Archive: {archive or "auto"}')
-        self._update_cleaner_hero()
+        self._sync_cleaner_state()
 
     def _update_cleanup_tree(self):
         self.cleanup_tree.delete(*self.cleanup_tree.get_children())
@@ -5733,16 +5892,12 @@ class StartupManagerGUI(ctk.CTk):
             messagebox.showerror('Restore', msg or 'Restore failed.')
 
     def _selected_recommendation(self):
-        sel = self.rec_tree.selection() if hasattr(self, 'rec_tree') else ()
-        if not sel:
+        idx = getattr(self, '_selected_rec_idx', None)
+        if idx is None:
             return None
-        try:
-            idx = int(sel[0])
-            recs = getattr(self, '_dashboard_recommendations', [])
-            if 0 <= idx < len(recs):
-                return recs[idx]
-        except (ValueError, TypeError):
-            pass
+        recs = getattr(self, '_dashboard_recommendations', [])
+        if 0 <= idx < len(recs):
+            return recs[idx]
         return None
 
     def _recommendation_primary_action(self):
@@ -5779,29 +5934,11 @@ class StartupManagerGUI(ctk.CTk):
     def _on_recommendation_select(self):
         rec = self._selected_recommendation()
         if not rec:
-            if hasattr(self, 'receipt_printer'):
-                self.receipt_printer.show_idle('Select a recommendation to view proof details.')
-            self._rec_status_lbl.config(text='Read-only guidance — select a row.')
-            self._set_btn_state(self._rec_btn_primary, False)
-            self._set_btn_state(self._rec_btn_copy, False)
+            if hasattr(self, '_proof_summary'):
+                self._proof_summary.show_idle()
             return
-        sev = (rec.get('severity') or 'info').upper()
-        lines = [
-            'RECOMMENDATION',
-            f'Priority: {sev}',
-            rec.get('title') or '—',
-            rec.get('detail') or '—',
-        ]
-        action = self._recommendation_action_label(rec)
-        lines.append(f'Next: {action}')
-        stamp = 'GUIDANCE ONLY' if sev == 'INFO' else 'REVIEW SUGGESTED'
-        if hasattr(self, 'receipt_printer'):
-            self.receipt_printer.show_static(lines, stamp=stamp)
-        self._rec_status_lbl.config(text=f'Selected · {action}')
-        actionable = sev != 'INFO' or 'scan' in action.lower()
-        self._set_btn_state(self._rec_btn_primary, actionable,
-                            f'Run: {action}' if actionable else 'Informational only — no action required.')
-        self._set_btn_state(self._rec_btn_copy, True, 'Copy recommendation text.')
+        if hasattr(self, '_proof_summary'):
+            self._proof_summary.show_recommendation(rec)
 
     def _recommendation_action_label(self, rec):
         title = (rec.get('title') or '').lower()
@@ -5825,7 +5962,7 @@ class StartupManagerGUI(ctk.CTk):
     def _ensure_rec_context_menu(self):
         if self._rec_context_menu is not None:
             return
-        menu = self._tree_context_menu(self.rec_tree)
+        menu = tk.Menu(self, tearoff=0)
         menu.add_command(label='Take action', command=self._recommendation_primary_action)
         menu.add_command(label='Copy details', command=self._recommendation_copy_details)
         menu.add_separator()
@@ -5835,16 +5972,6 @@ class StartupManagerGUI(ctk.CTk):
         self._rec_context_menu = menu
 
     def _on_recommendation_right_click(self, event):
-        self._tree_right_click_select(self.rec_tree, event)
-        self._on_recommendation_select()
-        self._ensure_rec_context_menu()
-        has = self._selected_recommendation() is not None
-        for idx, enabled in ((0, has), (1, has), (3, True), (4, True), (5, True)):
-            self._menu_entry_state(self._rec_context_menu, idx, enabled)
-        try:
-            self._rec_context_menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self._rec_context_menu.grab_release()
         return 'break'
 
     def _on_archive_double_click(self, _event=None):
@@ -6951,14 +7078,8 @@ class StartupManagerGUI(ctk.CTk):
         self.stat_cleanup_value.config(text=str(cleanup_count))
         self.stat_size_value.config(text=self._format_size(display_size))
 
-        self.rec_tree.delete(*self.rec_tree.get_children())
+        self._populate_recommendation_cards(recs)
         self._dashboard_recommendations = list(recs)
-        for i, r in enumerate(recs):
-            stripe = 'evenrow' if i % 2 else 'oddrow'
-            self.rec_tree.insert('', 'end', iid=str(i),
-                                 values=(r['severity'].upper(), r['title'], r['detail']),
-                                 tags=(r['severity'], stripe))
-        self._refresh_empty_hint(self.rec_empty_hint, self.rec_tree)
         if hasattr(self, '_home_rec_pane'):
             sync_table_empty_view(
                 has_rows=bool(recs),
@@ -6966,12 +7087,11 @@ class StartupManagerGUI(ctk.CTk):
                 pane=self._home_rec_pane,
             )
         if recs:
-            self.rec_tree.selection_set('0')
-            self.rec_tree.focus('0')
-            self._on_recommendation_select()
-        elif hasattr(self, 'receipt_printer'):
-            self.receipt_printer.show_idle('No recommendations — scan or review startup items.')
-            self._rec_status_lbl.config(text='No actionable findings right now.')
+            self._select_recommendation_card(0)
+        else:
+            self._selected_rec_idx = None
+            if hasattr(self, '_proof_summary'):
+                self._proof_summary.show_idle('No recommendations — scan or review startup items.')
 
         self.refresh_foresight()
         self._refresh_header_proof_badges()
@@ -6990,56 +7110,7 @@ class StartupManagerGUI(ctk.CTk):
                 custody = proof_module.verify_entries(entries)
             except Exception:
                 pass
-        status_tone = ACCENT
-        if self.cleanup_items:
-            checked = len(self.cleanup_selected)
-            msg = (f'{len(self.cleanup_items)} candidate(s) · {checked} checked · '
-                   f'{self._format_size(self.cleanup_total_size)} reclaimable')
-            if checked:
-                status_text = 'Receipt ready'
-                status_tone = ACCENT
-                self.dashboard_primary_btn.configure(
-                    text='Preview Receipt', command=self.preview_cleanup_receipt)
-                self.dashboard_msg_lbl.config(
-                    text=f'{msg}. Preview the receipt, then Archive & Clean.')
-                self.dashboard_secondary_btn.configure(
-                    text='Open Cleaner', command=lambda: self._navigate_to_tab(3))
-            else:
-                status_text = 'Candidates found'
-                status_tone = SEVERITY_COLORS.get('medium', ACCENT)
-                self.dashboard_primary_btn.configure(
-                    text='Archive & Clean', command=self.apply_cleanup)
-                self.dashboard_msg_lbl.config(
-                    text=f'{msg}. Check items on Cleaner, then archive.')
-                self.dashboard_secondary_btn.configure(
-                    text='Open Cleaner', command=lambda: self._navigate_to_tab(3))
-        elif self._scan_session_done or self._cached_scan_count:
-            cache_note = f' (last scan {self._cached_scan_at})' if self._cached_scan_at else ''
-            status_text = 'Ready to scan'
-            self.dashboard_primary_btn.configure(text='Scan Now', command=self.refresh_cleanup)
-            self.dashboard_msg_lbl.config(
-                text=f'Last scan found no current candidates{cache_note}. Click Scan to refresh.')
-            self.dashboard_secondary_btn.configure(
-                text='Open Activity', command=lambda: self._navigate_to_tab(1))
-        elif custody.get('missing', 0):
-            status_text = 'Custody review needed'
-            status_tone = SEVERITY_COLORS.get('high', ACCENT)
-            self.dashboard_primary_btn.configure(
-                text='Review custody', command=lambda: self._navigate_to_tab(1))
-            self.dashboard_msg_lbl.config(
-                text=f'{custody["missing"]} archived artifact(s) missing on disk — review Activity.')
-            self.dashboard_secondary_btn.configure(
-                text='Open Archive', command=lambda: self._navigate_to_tab(4))
-        else:
-            status_text = 'Ready to scan'
-            self.dashboard_primary_btn.configure(text='Scan Now', command=self.refresh_cleanup)
-            self.dashboard_msg_lbl.config(
-                text='Scan configured folders to find cleanup candidates.')
-            self.dashboard_secondary_btn.configure(
-                text='Open Activity', command=lambda: self._navigate_to_tab(1))
-        if hasattr(self, 'dashboard_status_lbl'):
-            self.dashboard_status_lbl.config(text=status_text, fg=status_tone)
-        self.preview_receipt_btn = self.dashboard_primary_btn
+        self._sync_home_state(custody_missing=int(custody.get('missing', 0) or 0))
         self._update_brand_identity()
 
     def _update_recent_proof(self):
