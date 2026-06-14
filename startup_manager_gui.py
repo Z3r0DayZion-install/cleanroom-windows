@@ -3328,8 +3328,9 @@ class StartupManagerGUI(ctk.CTk):
         self.settings_tab.grid_columnconfigure(0, weight=1)
 
         body = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        body.grid(row=0, column=0, sticky='nsew', padx=6, pady=(4, 0))
+        body.grid(row=0, column=0, sticky='nsew', padx=6, pady=(4, 8))
         body.grid_rowconfigure(2, weight=1)
+        body.grid_rowconfigure(3, weight=0, minsize=52)
         body.grid_columnconfigure(0, weight=1)
 
         hdr = ctk_theme.frame(body, BG)
@@ -3359,7 +3360,7 @@ class StartupManagerGUI(ctk.CTk):
         def _select_settings_section(name):
             for key, frame in self._settings_section_frames.items():
                 if key == name:
-                    frame.pack(fill='both', expand=True, padx=2, pady=2)
+                    frame.pack(fill='x', padx=2, pady=2)
                 else:
                     frame.pack_forget()
             for key, btn in self._settings_nav_btns.items():
@@ -3665,9 +3666,13 @@ class StartupManagerGUI(ctk.CTk):
                                           highlightthickness=0)
         self.set_whitelist_text.pack(fill='both', expand=True)
 
-        # Footer — docked save/discard bar
-        footer = ttk.Frame(self.settings_tab, style='Content.TFrame')
-        footer.grid(row=1, column=0, sticky='ew', padx=6, pady=(6, 8))
+        self._settings_scroll_spacer = ctk.CTkFrame(content, fg_color=BG, height=20, corner_radius=0)
+        self._settings_scroll_spacer.pack(fill='x', pady=(4, 12))
+        self._settings_scroll = content
+
+        # Footer — docked below scroll region (never overlays scroll content)
+        footer = ttk.Frame(body, style='Content.TFrame')
+        footer.grid(row=3, column=0, sticky='ew', pady=(6, 0))
         footer_inner = ctk_theme.frame(footer, HEAD_BG, corner_radius=8)
         footer_inner.pack(fill='x')
         btn_row = ttk.Frame(footer_inner, style='Card.TFrame')

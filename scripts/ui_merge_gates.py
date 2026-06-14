@@ -246,6 +246,20 @@ def check_layout(app, width: int, height: int, label: str, *, check_settings: bo
             save_btn = getattr(app, 'save_settings_btn', None)
             if save_btn is not None:
                 issues.extend(_widget_in_viewport(save_btn, app, f'{label}/Settings/Save Settings'))
+            scroll = getattr(app, '_settings_scroll', None)
+            if scroll is not None and save_btn is not None:
+                try:
+                    scroll.update_idletasks()
+                    save_btn.update_idletasks()
+                    if scroll.winfo_ismapped() and save_btn.winfo_ismapped():
+                        scroll_bottom = scroll.winfo_rooty() + scroll.winfo_height()
+                        save_top = save_btn.winfo_rooty()
+                        if scroll_bottom > save_top + 2:
+                            issues.append(
+                                f'{label}/Settings scroll region overlaps footer '
+                                f'(scroll bottom {scroll_bottom}, footer top {save_top})')
+                except Exception as exc:
+                    issues.append(f'{label}/Settings footer overlap check error: {exc}')
         except Exception as exc:
             issues.append(f'{label}/Settings tab check error: {exc}')
 
