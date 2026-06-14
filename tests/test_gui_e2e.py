@@ -216,8 +216,8 @@ def test_apply_writes_receipt_with_proof_and_custody_verifies(sandbox):
 
     # Verify Custody tool over the whole history reports everything present
     app.verify_custody()
-    assert pump(app, lambda: any('CUSTODY VERIFIED' in str(a) for a in sandbox['dialogs']['info']))
-    assert any('2/2 archived item(s) are present' in str(a) for a in sandbox['dialogs']['info'])
+    assert pump(app, lambda: 'CUSTODY VERIFIED' in app.global_status.cget('text'))
+    assert pump(app, lambda: '2/2' in app.global_status.cget('text'))
 
 
 def test_export_audit_writes_html(sandbox, tmp_path, monkeypatch):

@@ -6,6 +6,7 @@ import tkinter as tk
 import customtkinter as ctk
 
 from ui import ctk_theme
+from ui.product_dialogs import show_grouped_popover
 from ui.receipt_animation import ReceiptPrinterPanel
 
 
@@ -149,8 +150,9 @@ class CommandBar:
         flow.pack(side='right', padx=(8, 0))
         self._dashboard_mode = False
         self._popover_colors = dict(
-            bg=card_bg, head_bg=head_bg, accent=accent, accent_soft=accent_soft,
-            text=text, muted=text,
+            bg=card_bg, card=card_bg, head=head_bg, accent=accent,
+            accent_soft=accent_soft, text=text, muted=accent_soft,
+            border=head_bg, on_accent=on_accent,
         )
 
     def _show_more(self):
@@ -159,67 +161,16 @@ class CommandBar:
                 self._more_popover.destroy()
             except Exception:
                 pass
-        pop = tk.Toplevel(self._more_btn.winfo_toplevel())
-        pop.overrideredirect(True)
-        pop.configure(bg=self._popover_colors['head_bg'])
-        pop.attributes('-topmost', True)
         x = self._more_btn.winfo_rootx()
         y = self._more_btn.winfo_rooty() + self._more_btn.winfo_height() + 2
-        pop.geometry(f'+{x}+{y}')
-        self._more_popover = pop
-
-        shell = ctk_theme.frame(pop, self._popover_colors['bg'], corner_radius=10,
-                              border_width=1)
-        shell.pack(padx=1, pady=1)
-        inner = ctk_theme.frame(shell, self._popover_colors['bg'])
-        inner.pack(padx=8, pady=8)
-
-        def _close(_e=None):
-            try:
-                pop.destroy()
-            except Exception:
-                pass
-
-        pop.bind('<Escape>', _close)
-        root = self._more_btn.winfo_toplevel()
-
-        def _outside_click(event):
-            if not pop.winfo_exists():
-                return
-            px, py = pop.winfo_rootx(), pop.winfo_rooty()
-            pw, ph = pop.winfo_width(), pop.winfo_height()
-            if px <= event.x_root <= px + pw and py <= event.y_root <= py + ph:
-                return
-            bx = self._more_btn.winfo_rootx()
-            by = self._more_btn.winfo_rooty()
-            bw, bh = self._more_btn.winfo_width(), self._more_btn.winfo_height()
-            if bx <= event.x_root <= bx + bw and by <= event.y_root <= by + bh:
-                return
-            _close()
-
-        pop.after(80, lambda: root.bind('<Button-1>', _outside_click, add='+'))
-        pop.bind('<Destroy>', lambda _e: root.unbind('<Button-1>'))
-
-        for gi, (section, items) in enumerate(self._more_groups):
-            if gi:
-                ctk_theme.frame(inner, self._popover_colors['head_bg'], height=1).pack(
-                    fill='x', pady=(6, 6))
-            ctk_theme.label(
-                inner, section.upper(), text_color=self._popover_colors['accent'],
-                font_size=9, weight='bold',
-            ).pack(anchor='w', padx=4, pady=(0, 4))
-            for label, cmd in items:
-                ctk_theme.button(
-                    inner, label,
-                    lambda c=cmd: (c(), _close()),
-                    fg_color='transparent',
-                    hover_color=self._popover_colors['accent_soft'],
-                    text_color=self._popover_colors['text'],
-                    anchor='w', height=30, width=220,
-                ).pack(fill='x', pady=1)
-
-        pop.focus_force()
-        pop.after(100, pop.focus_force)
+        groups = [
+            (section, [(label, cmd) for label, cmd in items])
+            for section, items in self._more_groups
+        ]
+        self._more_popover = show_grouped_popover(
+            self._more_btn.winfo_toplevel(), x, y, groups,
+            colors=self._popover_colors, width=232,
+        )
 
     def set_context(self, tab_idx: int) -> None:
         """Emphasize primary actions for the active page."""

@@ -27,6 +27,13 @@ from ui.proof_dashboard import (
     sidebar_nav_button,
     trust_card,
 )
+from ui.product_dialogs import (
+    CleanroomModal,
+    show_action_popover,
+    show_grouped_popover,
+    show_report_modal,
+    show_summary_modal,
+)
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
@@ -398,7 +405,7 @@ class StartupManagerGUI(ctk.CTk):
         if animations_disabled():
             self._finish_launch_sequence()
             return
-        self._launch_logo = self._load_logo(96)
+        self._launch_logo = self._load_logo_ctk(96)
         run_launch_splash(
             self,
             title=brand.APP_DISPLAY,
@@ -1032,6 +1039,37 @@ class StartupManagerGUI(ctk.CTk):
             return photo.subsample(factor, factor)
         except Exception:
             return None
+
+    def _load_logo_ctk(self, px=96):
+        """CTkImage for CustomTkinter widgets — avoids CTkImage/PIL warnings."""
+        try:
+            path = None
+            for name in ('cleanroom-icon.png', 'icon.png'):
+                candidate = _resource_path(name)
+                if candidate.exists():
+                    path = candidate
+                    break
+            if path is None and brand.ICON_PNG_PATH.exists():
+                path = brand.ICON_PNG_PATH
+            if path is None or not PILImage:
+                return None
+            with PILImage.open(path) as img:
+                img = img.convert('RGBA')
+                img.thumbnail((px, px), PILImage.LANCZOS)
+                return ctk.CTkImage(light_image=img, dark_image=img, size=(px, px))
+        except Exception:
+            return None
+
+    def _dialog_colors(self):
+        return dict(
+            bg=BG, card=CARD_BG, head=HEAD_BG, accent=ACCENT,
+            accent_soft=ACCENT_SOFT, text=TEXT, muted=MUTED,
+            border=BORDER, on_accent=ON_ACCENT, danger='#ef4444',
+        )
+
+    def _show_row_popover(self, x, y, items, *, title: str = ''):
+        """Unified dark row action menu."""
+        show_action_popover(self, x, y, items, colors=self._dialog_colors(), title=title)
 
     def _build_header(self, parent=None):
         host = parent or self
@@ -2642,8 +2680,13 @@ class StartupManagerGUI(ctk.CTk):
         self.cleanup_tree.tag_configure('oddrow', background=CARD_BG)
         self.cleanup_tree.tag_configure('evenrow', background=ROW_ALT)
         self.cleanup_tree.bind('<Button-1>', self._on_cleanup_click)
+        self.cleanup_tree.bind('<Double-Button-1>', self._on_cleanup_double_click)
+        self.cleanup_tree.bind('<Button-3>', self._on_cleanup_right_click)
+        self.cleanup_tree.bind('<Return>', lambda e: self._cleanup_open_location())
         self.cleanup_tree.bind('<space>', self._on_cleanup_space)
         self.cleanup_tree.bind('<<TreeviewSelect>>', lambda e: self._on_cleanup_select())
+        for key in ('<Up>', '<Down>', '<Prior>', '<Next>'):
+            self.cleanup_tree.bind(key, lambda e: self.after_idle(self._on_cleanup_select))
         for reason, color in REASON_COLORS.items():
             self.cleanup_tree.tag_configure(f'reason:{reason}', foreground=color)
         self.cleanup_empty_hint = self._make_empty_hint(
@@ -2660,6 +2703,10 @@ class StartupManagerGUI(ctk.CTk):
         detail_inner.pack(fill='both', expand=True, padx=12, pady=12)
         ttk.Label(detail_inner, text='Candidate details', font=('Segoe UI', 11, 'bold'),
                   background=CARD_BG).pack(anchor='w', pady=(0, 8))
+        self._cleanup_detail_name = ttk.Label(
+            detail_inner, text='—', style='CardInfo.TLabel', wraplength=260,
+            font=('Segoe UI', 11, 'bold'))
+        self._cleanup_detail_name.pack(anchor='w', pady=(0, 8))
         self._cleanup_detail_path = ttk.Label(
             detail_inner, text='—', style='CardInfo.TLabel', wraplength=260, justify='left')
         self._cleanup_detail_reason = ttk.Label(
@@ -2711,6 +2758,7 @@ class StartupManagerGUI(ctk.CTk):
     def _on_cleanup_select(self):
         sel = self.cleanup_tree.selection()
         if not sel or not self.cleanup_items:
+            self._cleanup_detail_name.config(text='—')
             self._cleanup_detail_path.config(text='Path: —')
             self._cleanup_detail_reason.config(text='Category: —')
             self._cleanup_detail_size.config(text='Size: —')
@@ -2724,10 +2772,12 @@ class StartupManagerGUI(ctk.CTk):
             return
         item = self.cleanup_items[idx]
         path = item.get('path') or '—'
+        name = Path(path).name if path and path != '—' else '—'
         reason = item.get('reason') or 'other'
         cfg = self._cached_cfg() or {}
         archive_dest = self._planned_archive_dest(item, cfg)
         checked = idx in self.cleanup_selected
+        self._cleanup_detail_name.config(text=name)
         self._cleanup_detail_path.config(text=f'Path:\n{path}')
         self._cleanup_detail_reason.config(text=f'Category: {reason}')
         self._cleanup_detail_size.config(text=f'Size: {self._format_size(item.get("size", 0))}')
@@ -2740,6 +2790,29 @@ class StartupManagerGUI(ctk.CTk):
             self._cleanup_btn_exclude, self._cleanup_btn_preview,
         ):
             btn.config(state='normal')
+
+    def _on_cleanup_double_click(self, _event=None):
+        self._on_cleanup_select()
+        self._cleanup_open_location()
+
+    def _on_cleanup_right_click(self, event):
+        row = self.cleanup_tree.identify_row(event.y)
+        if row:
+            self.cleanup_tree.selection_set(row)
+            self.cleanup_tree.focus(row)
+        self._on_cleanup_select()
+        has = self._selected_cleanup_index() is not None
+        self._show_row_popover(
+            event.x_root, event.y_root,
+            [
+                ('Open location', self._cleanup_open_location, has),
+                ('Copy path', self._cleanup_copy_path, has),
+                ('Exclude', self._cleanup_exclude_selected, has),
+                ('Preview receipt', self._cleanup_preview_single, has),
+            ],
+            title='Candidate',
+        )
+        return 'break'
 
     def _cleanup_reason_hint(self, reason: str) -> str:
         hints = {
@@ -3909,8 +3982,7 @@ class StartupManagerGUI(ctk.CTk):
         if iid:
             if iid not in self.uninstall_tree.selection():
                 self.uninstall_tree.selection_set(iid)
-        self._ensure_uninstall_context_menu()
-        menu = self._uninst_context_menu
+        self._on_uninstall_select()
         entry = None
         if iid:
             try:
@@ -3921,17 +3993,22 @@ class StartupManagerGUI(ctk.CTk):
         has_cmd = bool(entry and uninstaller and uninstaller.build_uninstall_command(
             entry, quiet=bool(self.uninst_quiet_var.get())))
         has_key = bool(self._uninstall_registry_key_text(entry))
-        for idx, enabled in (
-            (0, has_entry), (1, has_entry), (2, has_entry),
-            (4, has_entry), (5, True), (6, True),
-            (8, has_entry), (9, has_cmd), (10, has_key),
-            (12, True),
-        ):
-            self._menu_entry_state(menu, idx, enabled)
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        self._show_row_popover(
+            event.x_root, event.y_root,
+            [
+                ('Uninstall…', self.uninstall_selected_program, has_entry),
+                ('Scan Leftovers…', self.scan_leftovers_for_selected, has_entry),
+                ('Force Remove…', self.force_remove_selected, has_entry),
+                ('Check / Uncheck', self._uninstall_ctx_toggle_check, has_entry),
+                ('Check all visible', self._uninstall_ctx_check_all, True),
+                ('Uncheck all visible', self._uninstall_ctx_uncheck_all, True),
+                ('Copy program name', self._uninstall_copy_name, has_entry),
+                ('Copy uninstall command', self._uninstall_copy_command, has_cmd),
+                ('Copy registry key', self._uninstall_copy_registry_key, has_key),
+                ('Refresh list', self.refresh_uninstaller, True),
+            ],
+            title='Uninstaller',
+        )
         return 'break'
 
     def _uninstall_ctx_toggle_check(self):
@@ -4528,97 +4605,73 @@ class StartupManagerGUI(ctk.CTk):
             eligible_bytes = sum(int(r.get('size') or 0) for r in eligible_list)
 
         reason_counts: dict[str, int] = {}
+        skip_labels = {
+            'missing dest evidence': 'missing archive proof',
+            'not in archive': 'not in archive / already removed',
+            'refuses live path': 'unsafe — matches live file path',
+        }
         for s in skipped_list:
-            reason = s.get('reason') or 'other'
+            reason = skip_labels.get(s.get('reason') or 'other', s.get('reason') or 'other')
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
-        dlg = tk.Toplevel(self)
-        dlg.title(title)
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.configure(bg=BG)
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-        frm = ttk.Frame(dlg, style='Content.TFrame', padding=16)
-        frm.pack(fill='both', expand=True)
+        eligible_dests = {r.get('dest') for r in eligible_list}
+        if archive_custody:
+            rank_labels = {
+                archive_custody.PRUNE_KEEP: 'keep in custody',
+                archive_custody.PRUNE_REVIEW: 'review recommended — not marked safe',
+            }
+            for r in recs:
+                dest = r.get('dest')
+                if dest in eligible_dests:
+                    continue
+                rank = r.get('prune_rank')
+                lbl = rank_labels.get(rank)
+                if lbl and dest not in {s.get('dest') for s in skipped_list}:
+                    reason_counts[lbl] = reason_counts.get(lbl, 0) + 1
 
-        ttk.Label(
-            frm,
-            text='Delete from archive custody',
-            style='Header.TLabel',
-        ).pack(anchor='w')
+        skipped_display = max(skipped, selected - eligible)
+        dlg = CleanroomModal(
+            self, title, width=500, height=360, colors=self._dialog_colors(),
+        )
+        dlg.heading('Delete from archive custody')
         summary_lines = [
             f'Selected: {selected:,}',
-            f'Eligible to delete now: {eligible:,} ({self._format_size(eligible_bytes)})',
-            f'Will be skipped: {skipped:,}',
+            f'Eligible to delete now: {eligible:,}',
+            f'Eligible size: {self._format_size(eligible_bytes)}',
+            f'Will be skipped: {skipped_display:,}',
             '',
             'Original live files are not touched.',
             'This permanently removes archived copies from Cleanroom custody.',
         ]
         if reason_counts:
             summary_lines.append('')
-            summary_lines.append('Skipped / caution summary:')
+            summary_lines.append('Why skipped:')
             for reason, cnt in sorted(reason_counts.items(), key=lambda x: -x[1])[:8]:
                 summary_lines.append(f'  · {reason}: {cnt:,}')
-        ttk.Label(
-            frm, text='\n'.join(summary_lines), style='CardInfo.TLabel',
-            wraplength=440, justify='left',
-        ).pack(anchor='w', pady=(10, 0))
+        dlg.message('\n'.join(summary_lines), wrap=440)
 
-        btns = ttk.Frame(frm, style='Content.TFrame')
-        btns.pack(fill='x', pady=(16, 0))
-        ttk.Button(
-            btns, text='Show file list…', style='Action.TButton',
-            command=lambda: self._show_delete_file_list(recs, parent=dlg),
-        ).pack(side='left')
-        ttk.Button(btns, text='Cancel', style='Action.TButton', command=dlg.destroy).pack(side='right')
         delete_lbl = (
             f'Delete {eligible:,} eligible item{"s" if eligible != 1 else ""}'
             if eligible else 'Nothing eligible to delete')
 
         def _confirm_delete():
-            dlg.destroy()
+            dlg.close()
             on_confirm()
 
-        delete_btn = ttk.Button(
-            btns, text=delete_lbl, style='Primary.TButton',
-            command=_confirm_delete,
-            state='normal' if eligible else 'disabled',
-        )
-        delete_btn.pack(side='right', padx=(0, 8))
-        dlg.geometry('480x320')
-        dlg.minsize(440, 280)
+        dlg.add_button('Show file list…', lambda: self._show_delete_file_list(recs), side='left')
+        dlg.add_button('Cancel', dlg.close)
+        delete_btn = dlg.add_button(delete_lbl, _confirm_delete, primary=True)
+        if eligible == 0:
+            delete_btn.configure(state='disabled')
 
     def _show_delete_file_list(self, recs, *, parent=None):
         """Scrollable optional file list for large archive delete selections."""
-        dlg = tk.Toplevel(parent or self)
-        dlg.title('Selected archive files')
-        dlg.transient(parent or self)
-        dlg.grab_set()
-        dlg.configure(bg=BG)
-        frm = ttk.Frame(dlg, style='Content.TFrame', padding=12)
-        frm.pack(fill='both', expand=True)
-        ttk.Label(
-            frm,
-            text=f'{len(recs):,} archived file(s)',
-            style='Header.TLabel',
-        ).pack(anchor='w')
-        text_frm = ttk.Frame(frm, style='Content.TFrame')
-        text_frm.pack(fill='both', expand=True, pady=(8, 0))
-        text = tk.Text(
-            text_frm, wrap='none', bg=PREVIEW_BG, fg=TEXT, insertbackground=TEXT,
-            font=('Consolas', 9), height=18, width=72,
+        dlg = CleanroomModal(
+            parent or self, 'Selected archive files',
+            width=680, height=480, colors=self._dialog_colors(), resizable=True,
         )
-        vsb = ttk.Scrollbar(text_frm, orient='vertical', command=text.yview)
-        hsb = ttk.Scrollbar(text_frm, orient='horizontal', command=text.xview)
-        text.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        text.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
-        text_frm.grid_rowconfigure(0, weight=1)
-        text_frm.grid_columnconfigure(0, weight=1)
-        text.config(state='disabled')
-        ttk.Button(frm, text='Close', style='Action.TButton', command=dlg.destroy).pack(anchor='e', pady=(8, 0))
-        dlg.geometry('640x420')
+        dlg.heading(f'{len(recs):,} archived file(s)', size=14)
+        txt = dlg.scroll_text('', height=320, mono=True)
 
         token = self._cancel_chunked_work('delete_list')
         state = {'idx': 0}
@@ -4631,14 +4684,15 @@ class StartupManagerGUI(ctk.CTk):
             lines = []
             for r in recs[state['idx']:end]:
                 lines.append(f'{self._format_size(r.get("size", 0))}  {r.get("dest", "")}')
-            text.config(state='normal')
-            text.insert('end', '\n'.join(lines) + ('\n' if end < len(recs) else ''))
-            text.config(state='disabled')
-            text.see('end')
+            txt.config(state='normal')
+            txt.insert('end', '\n'.join(lines) + ('\n' if end < len(recs) else ''))
+            txt.config(state='disabled')
+            txt.see('end')
             state['idx'] = end
             if state['idx'] < len(recs):
                 self.after(1, pump)
 
+        dlg.add_button('Close', dlg.close, primary=True)
         self.after(0, pump)
 
     def _set_status(self, text, *, pulse=False):
@@ -5638,20 +5692,22 @@ class StartupManagerGUI(ctk.CTk):
     def _on_activity_right_click(self, event):
         self._tree_right_click_select(self.activity_tree, event)
         self._on_activity_select()
-        self._ensure_activity_context_menu()
         entry = self._selected_activity_entry()
-        menu = self._activity_context_menu
         rp = self._find_receipt_for_paths(
             entry.get('src') if entry else None, entry.get('dest') if entry else None)
         has = entry is not None
-        for idx, enabled in ((0, bool(rp)), (1, has and bool(entry.get('dest'))),
-                             (2, has), (3, has), (5, has and entry.get('present')),
-                             (6, True), (8, True), (9, True)):
-            self._menu_entry_state(menu, idx, enabled)
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        self._show_row_popover(
+            event.x_root, event.y_root,
+            [
+                ('Open Receipt', self._activity_open_receipt, has and bool(rp)),
+                ('Open Archive Folder', self._activity_open_archive, has and bool(entry.get('dest') if entry else False)),
+                ('Copy proof details', self._activity_copy_proof, has),
+                ('Restore', self._activity_restore_selected, has and bool(entry.get('present') if entry else False)),
+                ('Verify Custody', self.verify_custody, True),
+                ('Refresh', self.refresh_activity, True),
+            ],
+            title='Proof ledger',
+        )
         return 'break'
 
     def _activity_open_receipt(self):
@@ -5882,20 +5938,25 @@ class StartupManagerGUI(ctk.CTk):
         self._archive_context_menu = menu
 
     def _on_archive_right_click(self, event):
-        iid = self._tree_right_click_select(self.archive_tree, event)
-        self._ensure_archive_context_menu()
-        menu = self._archive_context_menu
+        self._tree_right_click_select(self.archive_tree, event)
+        self._on_archive_select()
         has_sel = bool(self._selected_archive_records())
-        for idx, enabled in (
-            (0, has_sel), (1, has_sel), (3, has_sel), (4, has_sel), (5, has_sel),
-            (7, has_sel), (8, has_sel),
-            (10, True), (11, True), (12, True), (13, True), (14, True), (16, True),
-        ):
-            self._menu_entry_state(menu, idx, enabled)
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        self._show_row_popover(
+            event.x_root, event.y_root,
+            [
+                ('Restore Selected', self._archive_restore_selected, has_sel),
+                ('Delete from Archive…', self.confirm_prune_selected, has_sel),
+                ('Open Archive Location', self._archive_open_archive, has_sel),
+                ('Open Original Location', self._archive_open_original, has_sel),
+                ('Open Receipt', self._archive_open_receipt, has_sel),
+                ('Copy archive path', self._archive_copy_path, has_sel),
+                ('Select all safe to delete', self._archive_select_all_safe, True),
+                ('Select visible', self._archive_select_visible, True),
+                ('Clear selection', self._archive_clear_selection, True),
+                ('Refresh', self.refresh_archive_browser, True),
+            ],
+            title='Archive custody',
+        )
         return 'break'
 
     def _archive_copy_original_path(self):
@@ -5928,19 +5989,22 @@ class StartupManagerGUI(ctk.CTk):
         self._restore_context_menu = menu
 
     def _on_restore_right_click(self, event):
-        iid = self._tree_right_click_select(self.restore_tree, event)
-        self._ensure_restore_context_menu()
-        menu = self._restore_context_menu
+        self._tree_right_click_select(self.restore_tree, event)
         has_sel = self._selected_restore_index() is not None
-        for idx, enabled in (
-            (0, has_sel), (1, has_sel), (2, has_sel), (4, has_sel),
-            (6, has_sel), (7, has_sel), (10, True),
-        ):
-            self._menu_entry_state(menu, idx, enabled)
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        self._show_row_popover(
+            event.x_root, event.y_root,
+            [
+                ('Restore Selected', self.restore_selected_entry, has_sel),
+                ('Restore Now', lambda: self.restore_selected_entry(apply=True), has_sel),
+                ('Delete from Archive…', self.confirm_delete_restore_selected, has_sel),
+                ('Open Archived File', self._open_archived_selected, has_sel),
+                ('Open Archive Tab', self.open_archive_browser_tab, True),
+                ('Copy original path', self._restore_copy_original, has_sel),
+                ('Copy archive path', self._restore_copy_archive, has_sel),
+                ('Reload log', self.refresh_restore, True),
+            ],
+            title='Restore',
+        )
         return 'break'
 
     def _restore_copy_original(self):
@@ -5975,46 +6039,50 @@ class StartupManagerGUI(ctk.CTk):
         if shell_menu_module is None:
             messagebox.showerror('Context Menus', 'Shell menu module unavailable.')
             return
-        dlg = tk.Toplevel(self)
-        dlg.title('Explorer Context Menu Editor')
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.configure(bg=BG)
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-        apply_dialog_geometry(dlg, self, 580, 540)
-        shell = ctk_theme.frame(dlg, CARD_BG, corner_radius=12)
-        shell.pack(fill='both', expand=True, padx=12, pady=12)
-        frm = ttk.Frame(shell, style='Card.TFrame', padding=16)
-        frm.pack(fill='both', expand=True)
-        ttk.Label(frm, text='Explorer Context Menu Editor',
-                  style='Header.TLabel').pack(anchor='w')
-        ttk.Label(
-            frm,
-            text='Install Cleanroom actions in File Explorer (per-user, HKCU). '
-                 'Use %1 in custom commands for the selected file/folder path.',
-            style='SubHeader.TLabel', wraplength=520,
-        ).pack(anchor='w', pady=(6, 12))
+        dlg = CleanroomModal(
+            self, 'Explorer Context Menu Editor',
+            width=640, height=580, colors=self._dialog_colors(), resizable=True,
+        )
+        dlg.heading('Explorer Context Menu Editor')
+        dlg.subheading(
+            'Install Cleanroom actions in File Explorer (per-user, HKCU). '
+            'Use %1 in custom commands for the selected file or folder path.',
+        )
+        frm = ttk.Frame(dlg.body, style='Card.TFrame')
+        frm.pack(fill='both', expand=True, pady=(8, 0))
 
         cfg = shell_menu_module.load_config()
         preset_vars = {}
-        presets_box = ttk.Labelframe(frm, text='Built-in menus', style='Detail.TLabelframe')
+        presets_box = ctk.CTkFrame(frm, fg_color=HEAD_BG, corner_radius=8)
         presets_box.pack(fill='x', pady=(0, 8))
+        ctk_theme.label(
+            presets_box, 'Built-in menus', text_color=ACCENT,
+            font_size=10, weight='bold',
+        ).pack(anchor='w', padx=10, pady=(8, 4))
+        preset_inner = ttk.Frame(presets_box, style='Card.TFrame')
+        preset_inner.pack(fill='x', padx=8, pady=(0, 8))
         for preset in shell_menu_module.PRESETS:
             var = tk.BooleanVar(value=bool(cfg.get('presets', {}).get(preset['id'], preset['enabled_default'])))
             preset_vars[preset['id']] = var
             target_label = shell_menu_module.TARGETS.get(preset['target'], ('', ''))[0]
             ttk.Checkbutton(
-                presets_box,
+                preset_inner,
                 text=f'{preset["label"]}  ({target_label})',
                 variable=var,
-            ).pack(anchor='w', padx=8, pady=2)
+            ).pack(anchor='w', pady=3)
 
-        custom_box = ttk.Labelframe(frm, text='Custom menus', style='Detail.TLabelframe')
+        custom_box = ctk.CTkFrame(frm, fg_color=HEAD_BG, corner_radius=8)
         custom_box.pack(fill='both', expand=True, pady=(0, 8))
-        custom_list = tk.Listbox(custom_box, height=5, font=('Segoe UI', 10),
-                                 bg=PREVIEW_BG, fg=TEXT, selectbackground=ACCENT,
-                                 selectforeground=ON_ACCENT)
-        custom_list.pack(fill='both', expand=True, padx=8, pady=(8, 4))
+        ctk_theme.label(
+            custom_box, 'Custom menus', text_color=ACCENT,
+            font_size=10, weight='bold',
+        ).pack(anchor='w', padx=10, pady=(8, 4))
+        custom_list = tk.Listbox(
+            custom_box, height=5, font=('Segoe UI', 10),
+            bg=PREVIEW_BG, fg=TEXT, selectbackground=ACCENT,
+            selectforeground=ON_ACCENT, relief='flat', highlightthickness=0,
+        )
+        custom_list.pack(fill='both', expand=True, padx=10, pady=(0, 4))
 
         def refresh_custom_list():
             custom_list.delete(0, 'end')
@@ -6025,44 +6093,45 @@ class StartupManagerGUI(ctk.CTk):
         refresh_custom_list()
 
         custom_btns = ttk.Frame(custom_box, style='Card.TFrame')
-        custom_btns.pack(fill='x', padx=8, pady=(0, 8))
+        custom_btns.pack(fill='x', padx=10, pady=(0, 8))
 
         def add_custom():
-            sub = tk.Toplevel(dlg)
-            sub.title('Add custom menu')
-            sub.transient(dlg)
-            sub.grab_set()
-            body = ttk.Frame(sub, padding=10)
+            sub = CleanroomModal(
+                dlg.win, 'Add custom menu',
+                width=480, height=360, colors=self._dialog_colors(),
+            )
+            sub.heading('Add custom menu')
+            body = ttk.Frame(sub.body, style='Card.TFrame')
             body.pack(fill='both', expand=True)
-            ttk.Label(body, text='Menu label:').grid(row=0, column=0, sticky='w', pady=3)
+            ttk.Label(body, text='Menu label:').grid(row=0, column=0, sticky='w', pady=6)
             label_var = tk.StringVar(value='Cleanroom action')
-            ttk.Entry(body, textvariable=label_var, width=36).grid(row=0, column=1, sticky='we', pady=3)
-            ttk.Label(body, text='Right-click on:').grid(row=1, column=0, sticky='w', pady=3)
+            ttk.Entry(body, textvariable=label_var, width=36).grid(row=0, column=1, sticky='we', pady=6)
+            ttk.Label(body, text='Right-click on:').grid(row=1, column=0, sticky='w', pady=6)
             target_keys = list(shell_menu_module.TARGETS.keys())
             target_labels = [shell_menu_module.TARGETS[k][0] for k in target_keys]
             target_var = tk.StringVar(value=target_labels[0])
             ttk.Combobox(
                 body, textvariable=target_var, state='readonly', width=34,
                 values=target_labels,
-            ).grid(row=1, column=1, sticky='we', pady=3)
-            ttk.Label(body, text='Action:').grid(row=2, column=0, sticky='w', pady=3)
+            ).grid(row=1, column=1, sticky='we', pady=6)
+            ttk.Label(body, text='Action:').grid(row=2, column=0, sticky='w', pady=6)
             action_keys = list(shell_menu_module.ACTION_TEMPLATES.keys())
             action_labels = [shell_menu_module.ACTION_TEMPLATES[k][0] for k in action_keys]
             action_var = tk.StringVar(value=action_labels[0])
             ttk.Combobox(
                 body, textvariable=action_var, state='readonly', width=34,
                 values=action_labels,
-            ).grid(row=2, column=1, sticky='we', pady=3)
-            ttk.Label(body, text='Custom args (optional):').grid(row=3, column=0, sticky='w', pady=3)
+            ).grid(row=2, column=1, sticky='we', pady=6)
+            ttk.Label(body, text='Custom args (optional):').grid(row=3, column=0, sticky='w', pady=6)
             args_var = tk.StringVar(value='')
-            ttk.Entry(body, textvariable=args_var, width=36).grid(row=3, column=1, sticky='we', pady=3)
+            ttk.Entry(body, textvariable=args_var, width=36).grid(row=3, column=1, sticky='we', pady=6)
             ttk.Label(body, text='Example: --shell-archive "%1"', style='Info.TLabel').grid(
                 row=4, column=1, sticky='w')
+            body.columnconfigure(1, weight=1)
 
             def save_custom():
                 label = label_var.get().strip()
                 if not label:
-                    messagebox.showwarning('Custom menu', 'Enter a menu label.', parent=sub)
                     return
                 try:
                     target_key = target_keys[target_labels.index(target_var.get())]
@@ -6081,14 +6150,10 @@ class StartupManagerGUI(ctk.CTk):
                     'enabled': True,
                 })
                 refresh_custom_list()
-                sub.destroy()
+                sub.close()
 
-            btn_row = ttk.Frame(body)
-            btn_row.grid(row=5, column=0, columnspan=2, pady=(10, 0), sticky='e')
-            ttk.Button(btn_row, text='Cancel', command=sub.destroy).pack(side='right')
-            ttk.Button(btn_row, text='Add', style='Primary.TButton', command=save_custom).pack(
-                side='right', padx=(0, 8))
-            body.columnconfigure(1, weight=1)
+            sub.add_button('Cancel', sub.close)
+            sub.add_button('Add', save_custom, primary=True)
 
         def remove_custom():
             sel = custom_list.curselection()
@@ -6104,8 +6169,8 @@ class StartupManagerGUI(ctk.CTk):
         ttk.Button(custom_btns, text='Add custom menu…', command=add_custom).pack(side='left')
         ttk.Button(custom_btns, text='Remove selected', command=remove_custom).pack(side='left', padx=6)
 
-        status = ttk.Label(frm, text='', style='Info.TLabel', wraplength=520)
-        status.pack(anchor='w', pady=(0, 8))
+        status = ttk.Label(frm, text='', style='Info.TLabel', wraplength=560)
+        status.pack(anchor='w', pady=(0, 4))
 
         def save_cfg_from_ui():
             cfg['presets'] = {pid: bool(var.get()) for pid, var in preset_vars.items()}
@@ -6117,7 +6182,7 @@ class StartupManagerGUI(ctk.CTk):
                 shell_menu_module.uninstall_all(cfg)
                 installed = shell_menu_module.install_all(self._shell_exe_path(), cfg)
             except OSError as e:
-                messagebox.showerror('Context Menus', str(e), parent=dlg)
+                messagebox.showerror('Context Menus', str(e), parent=dlg.win)
                 return
             status.config(text=f'Installed {len(installed)} Explorer menu(s). '
                                  'Right-click files or folders in File Explorer to use them.')
@@ -6130,17 +6195,13 @@ class StartupManagerGUI(ctk.CTk):
             try:
                 shell_menu_module.uninstall_all(cfg)
             except OSError as e:
-                messagebox.showerror('Context Menus', str(e), parent=dlg)
+                messagebox.showerror('Context Menus', str(e), parent=dlg.win)
                 return
             status.config(text='Removed Cleanroom entries from Explorer context menus.')
 
-        actions = ttk.Frame(frm)
-        actions.pack(fill='x')
-        ttk.Button(actions, text='Close', command=dlg.destroy).pack(side='right')
-        ttk.Button(actions, text='Remove from Explorer', style='Action.TButton',
-                   command=do_remove).pack(side='right', padx=(0, 8))
-        ttk.Button(actions, text='Install to Explorer', style='Primary.TButton',
-                   command=do_install).pack(side='right', padx=(0, 8))
+        dlg.add_button('Close', dlg.close)
+        dlg.add_button('Remove from Explorer', do_remove)
+        dlg.add_button('Install to Explorer', do_install, primary=True)
 
     def _view_receipt_file(self, path, preview=False):
         if receipts_module is None:
@@ -6153,7 +6214,8 @@ class StartupManagerGUI(ctk.CTk):
             return
         if show_receipt:
             show_receipt(self, body, receipt_path=path, preview=preview,
-                         bg=BG, card=CARD_BG, text_fg=TEXT)
+                         bg=BG, card=CARD_BG, text_fg=TEXT, accent=ACCENT,
+                         muted=MUTED, border=BORDER, on_accent=ON_ACCENT)
         else:
             self._show_text_dialog('Cleanroom Receipt', body)
 
@@ -6412,7 +6474,14 @@ class StartupManagerGUI(ctk.CTk):
                         f"present on disk right now "
                         f"({self._format_size(result['bytes_in_custody'])} in custody).\n\n"
                         'Every file Cleanroom has archived is still where the log says it is.')
-                messagebox.showinfo('Verify Custody — CUSTODY VERIFIED ✓', body)
+                ok_dlg = CleanroomModal(
+                    self, 'Verify Custody', width=460, height=240, colors=self._dialog_colors(),
+                )
+                ok_dlg.heading('CUSTODY VERIFIED ✓')
+                ok_dlg.message(body, wrap=420)
+                ok_dlg.add_button('OK', ok_dlg.close, primary=True)
+                self._set_status(
+                    f'CUSTODY VERIFIED ✓ — {result["verified"]}/{result["total"]} present')
             else:
                 self._show_custody_verify_summary(result)
             self.refresh_activity()
@@ -7196,15 +7265,6 @@ class StartupManagerGUI(ctk.CTk):
     # Telemetry dialog
     # ------------------------------------------------------------------
     def _show_delete_result_dialog(self, *, deleted, skipped, freed, receipt_path=None):
-        dlg = tk.Toplevel(self)
-        dlg.title('Delete from Archive — Result')
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.configure(bg=BG)
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-        frm = ttk.Frame(dlg, style='Content.TFrame', padding=16)
-        frm.pack(fill='both', expand=True)
-        ttk.Label(frm, text='Archive delete complete', style='Header.TLabel').pack(anchor='w')
         lines = [
             f'Deleted: {deleted:,} archived file(s) ({freed})',
             f'Skipped: {skipped:,} item(s)',
@@ -7213,55 +7273,44 @@ class StartupManagerGUI(ctk.CTk):
         ]
         if receipt_path:
             lines.append(f'Receipt: {receipt_path}')
-        ttk.Label(frm, text='\n'.join(lines), style='CardInfo.TLabel',
-                  wraplength=420, justify='left').pack(anchor='w', pady=(10, 0))
-        btns = ttk.Frame(frm, style='Content.TFrame')
-        btns.pack(fill='x', pady=(16, 0))
+        dlg = CleanroomModal(
+            self, 'Delete from Archive — Result',
+            width=480, height=280, colors=self._dialog_colors(),
+        )
+        dlg.heading('Archive delete complete')
+        dlg.message('\n'.join(lines), wrap=420)
         if receipt_path and Path(receipt_path).is_file():
-            ttk.Button(
-                btns, text='Open Receipt', style='Primary.TButton',
-                command=lambda: (self._view_receipt_file(receipt_path), dlg.destroy()),
-            ).pack(side='left')
-        ttk.Button(btns, text='OK', style='Action.TButton', command=dlg.destroy).pack(side='right')
-        dlg.geometry('440x240')
+            dlg.add_button(
+                'Open Receipt',
+                lambda: (self._view_receipt_file(receipt_path), dlg.close()),
+                side='left', primary=True,
+            )
+        dlg.add_button('OK', dlg.close, primary=True)
 
     def _show_custody_verify_summary(self, result):
         verified = result.get('verified', 0)
         total = result.get('total', 0)
         missing = result.get('missing', 0)
         summary = (
-            f'Custody check failed\n\n'
             f'{verified:,} / {total:,} archived items are present on disk.\n'
             f'{missing:,} items are missing from archive.\n\n'
             'This usually means files were pruned, moved, or deleted outside Cleanroom.'
         )
         missing_items = result.get('missing_items') or []
-        report_lines = [
+        report_body = '\n'.join([
             'CLEANROOM — CUSTODY VERIFY REPORT',
             '',
-            summary.replace('\n\n', '\n'),
+            summary,
             '',
             'Missing items:',
-        ]
-        report_lines.extend(f'  · {p}' for p in missing_items)
+            *[f'  · {p}' for p in missing_items],
+        ])
 
-        dlg = tk.Toplevel(self)
-        dlg.title('Verify Custody')
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.configure(bg=BG)
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-        frm = ttk.Frame(dlg, style='Content.TFrame', padding=16)
-        frm.pack(fill='both', expand=True)
-        ttk.Label(frm, text='Custody check failed', style='Header.TLabel').pack(anchor='w')
-        ttk.Label(frm, text=summary, style='CardInfo.TLabel', wraplength=440,
-                  justify='left').pack(anchor='w', pady=(10, 0))
-        btns = ttk.Frame(frm, style='Content.TFrame')
-        btns.pack(fill='x', pady=(16, 0))
-
-        def _open_report():
-            self._show_text_dialog('Custody Verify — Full Report', '\n'.join(report_lines),
-                                   width=680, height=520)
+        dlg = CleanroomModal(
+            self, 'Verify Custody', width=500, height=300, colors=self._dialog_colors(),
+        )
+        dlg.heading('Custody check failed')
+        dlg.message(summary, wrap=440)
 
         def _copy_summary():
             try:
@@ -7269,59 +7318,54 @@ class StartupManagerGUI(ctk.CTk):
                 self.clipboard_append(summary)
                 self._set_status('Custody summary copied.')
             except tk.TclError:
-                messagebox.showinfo('Copy summary', summary)
+                pass
 
-        ttk.Button(btns, text='Open full report', style='Action.TButton',
-                   command=_open_report).pack(side='left')
-        ttk.Button(btns, text='Copy summary', style='Action.TButton',
-                   command=_copy_summary).pack(side='left', padx=(8, 0))
-        ttk.Button(btns, text='OK', style='Primary.TButton', command=dlg.destroy).pack(side='right')
-        dlg.geometry('460x280')
+        dlg.add_button(
+            'Open full report',
+            lambda: show_report_modal(
+                self, title='Custody Verify — Full Report', headline='Full custody report',
+                body=report_body, colors=self._dialog_colors(),
+            ),
+            side='left',
+        )
+        dlg.add_button('Copy summary', _copy_summary, side='left')
+        dlg.add_button('OK', dlg.close, primary=True)
 
     def _show_diagnostics_dialog(self):
-        dlg = tk.Toplevel(self)
-        dlg.configure(bg=BG)
-        dlg.title('Diagnostics')
-        dlg.geometry('440x240')
-        dlg.resizable(False, False)
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-
-        ttk.Label(dlg, text='Local diagnostics', font=('Segoe UI', 12, 'bold')).pack(
-            anchor='w', padx=12, pady=(12, 4))
-        ttk.Label(
-            dlg,
-            text='Local-only logs and optional anonymous metrics. Nothing leaves this PC unless '
-                 'you opt in. Use this panel to review diagnostics preferences.',
-            style='Info.TLabel', wraplength=400,
-        ).pack(anchor='w', padx=12)
+        dlg = CleanroomModal(
+            self, 'Diagnostics', width=460, height=260, colors=self._dialog_colors(),
+        )
+        dlg.heading('Local diagnostics')
+        dlg.message(
+            'Local-only logs and optional anonymous metrics. Nothing leaves this PC unless '
+            'you opt in. Adjust diagnostics preferences below.',
+            wrap=400,
+        )
         var = tk.BooleanVar(value=False)
         try:
             if enable_telemetry and enable_telemetry.is_opted_in():
                 var.set(True)
         except Exception:
             var.set(False)
-        cb = ttk.Checkbutton(
-            dlg, text='Enable anonymous usage metrics (opt-in, local preference only)', variable=var)
-        cb.pack(anchor='w', padx=12, pady=(8, 8))
+        row = ctk.CTkFrame(dlg.body, fg_color=dlg.colors['card'])
+        row.pack(anchor='w', pady=(12, 0))
+        ctk_theme.switch(
+            row, 'Enable anonymous usage metrics (opt-in, local only)', var,
+            text_color=TEXT, progress_color=ACCENT,
+            button_color=BORDER, button_hover_color=ACCENT,
+        ).pack(anchor='w')
 
         def _save():
             try:
                 if enable_telemetry:
                     enable_telemetry.set_opt_in(bool(var.get()))
                 self.refresh_dashboard()
-                messagebox.showinfo('Diagnostics', 'Diagnostics preference saved.', parent=dlg)
-            except Exception as e:
-                messagebox.showerror('Diagnostics', f'Unable to save preference:\n{e}', parent=dlg)
-            dlg.destroy()
+            except Exception:
+                pass
+            dlg.close()
 
-        btns = ttk.Frame(dlg)
-        btns.pack(side='bottom', fill='x', padx=12, pady=12)
-        ttk.Button(btns, text='Save', style='Primary.TButton', command=_save).pack(side='right')
-        ttk.Button(btns, text='Cancel', style='Action.TButton', command=dlg.destroy).pack(
-            side='right', padx=(0, 6))
-        cb.focus_set()
+        dlg.add_button('Save', _save, primary=True)
+        dlg.add_button('Cancel', dlg.close)
 
     def _show_telemetry_dialog(self):
         """Legacy alias — opens Local Logs / Diagnostics panel."""
@@ -7404,34 +7448,20 @@ class StartupManagerGUI(ctk.CTk):
             self._update_actions()
         ent = self._selected_entry()
         states = self._startup_menu_state(ent)
-
-        menu = tk.Menu(
-            self, tearoff=0, bg=HEAD_BG, fg=TEXT,
-            activebackground=ACCENT_SOFT, activeforeground=TEXT,
-            relief='flat', borderwidth=0,
+        self._show_row_popover(
+            event.x_root, event.y_root,
+            [
+                ('Enable selected', self.enable_selected, states['enable'][0]),
+                ('Disable selected', self.disable_selected, states['disable'][0]),
+                ('Copy command', self.copy_command, states['copy'][0]),
+                ('Open file location', self._startup_open_file_location, states['open_file'][0]),
+                ('Open registry / Task Scheduler', self._startup_open_source_location, states['open_loc'][0]),
+                ('Search online', self._startup_search_online, states['search'][0]),
+                ('Show details', self._on_startup_double_click, states['details'][0]),
+            ],
+            title='Startup',
         )
-
-        def _add(label, cmd, key):
-            ok, _why = states[key]
-            menu.add_command(label=label, command=cmd, state='normal' if ok else 'disabled')
-
-        _add('Enable selected', self.enable_selected, 'enable')
-        _add('Disable selected', self.disable_selected, 'disable')
-        menu.add_separator()
-        _add('Copy command', self.copy_command, 'copy')
-        _add('Open file location', self._startup_open_file_location, 'open_file')
-        _add('Open registry / Task Scheduler location', self._startup_open_source_location, 'open_loc')
-        menu.add_separator()
-        _add('Search online', self._startup_search_online, 'search')
-        _add('Show details', self._on_startup_double_click, 'details')
-
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            try:
-                menu.grab_release()
-            except Exception:
-                pass
+        return 'break'
 
     def _startup_open_file_location(self):
         ent = self._selected_entry()
